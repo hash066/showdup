@@ -3,8 +3,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import '../core/theme.dart';
 import '../core/config.dart';
@@ -32,6 +34,26 @@ void openAttempt(BuildContext context, Attempt a) => Navigator.push(
   MaterialPageRoute<void>(builder: (_) => AttemptScreen(attemptId: a.id)),
 );
 
+class _CenteredList extends StatelessWidget {
+  const _CenteredList({required this.children, this.padding = 24});
+  final List<Widget> children;
+  final double padding;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 640),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.all(padding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
+    ),
+  );
+}
+
 class PageHeading extends StatelessWidget {
   const PageHeading(this.title, this.subtitle, {super.key, this.trailing});
   final String title, subtitle;
@@ -39,30 +61,75 @@ class PageHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 26, top: 8),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final heading = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Eyebrow(subtitle),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -1.2,
+              ),
+            ),
+          ],
+        );
+        final stacked =
+            constraints.maxWidth < 360 ||
+            MediaQuery.textScalerOf(context).scale(16) > 22;
+        if (stacked) {
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Eyebrow(subtitle),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -1.2,
-                ),
-              ),
+              heading,
+              if (trailing != null) ...[const SizedBox(height: 12), trailing!],
             ],
-          ),
-        ),
-        ?trailing,
-      ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: heading),
+            ?trailing,
+          ],
+        );
+      },
     ),
   );
+}
+
+List<Attempt> prioritizedTodayAttempts(List<Attempt> attempts, DateTime now) {
+  final candidates = attempts
+      .where(
+        (a) =>
+            a.windowEndAt.isAfter(now.subtract(const Duration(hours: 6))) &&
+            a.windowStartAt.isBefore(now.add(const Duration(hours: 24))),
+      )
+      .toList();
+  int rank(Attempt a) {
+    if (a.state == AttemptState.pending &&
+        now.isAfter(a.windowStartAt) &&
+        now.isBefore(a.windowEndAt)) {
+      return 0;
+    }
+    if (a.state == AttemptState.pending && a.windowStartAt.isAfter(now)) {
+      return 1;
+    }
+    if (a.state == AttemptState.pending) return 2;
+    return 3;
+  }
+
+  candidates.sort((left, right) {
+    final byRank = rank(left).compareTo(rank(right));
+    if (byRank != 0) return byRank;
+    if (rank(left) == 3) return right.windowEndAt.compareTo(left.windowEndAt);
+    return left.windowStartAt.compareTo(right.windowStartAt);
+  });
+  return candidates;
 }
 
 class TodayScreen extends ConsumerWidget {
@@ -70,13 +137,7 @@ class TodayScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final app = ref.watch(appProvider), now = DateTime.now();
-    final today = app.attempts
-        .where(
-          (a) =>
-              a.windowEndAt.isAfter(now.subtract(const Duration(hours: 6))) &&
-              a.windowStartAt.isBefore(now.add(const Duration(hours: 24))),
-        )
-        .toList();
+    final today = prioritizedTodayAttempts(app.attempts, now);
     final active = app.commitments
         .where((c) => c.status == CommitmentStatus.active)
         .toList();
@@ -84,9 +145,13 @@ class TodayScreen extends ConsumerWidget {
     final c = a == null ? null : app.commitment(a.commitmentId);
     return RefreshIndicator(
       onRefresh: app.refresh,
-      child: ListView(
+      child: SingleChildScrollView(
+        // Pull-to-refresh must work even when today's content is short.
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(24),
-        children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
           PageHeading(
             'A little better, today.',
             DateFormat('EEEE, MMMM d').format(now),
@@ -107,10 +172,13 @@ class TodayScreen extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
-                      const Expanded(child: Eyebrow('Your next promise')),
+                      const Eyebrow('Your next promise'),
                       StatePill(a.state),
                     ],
                   ),
@@ -139,7 +207,9 @@ class TodayScreen extends ConsumerWidget {
                           : c.verifierConfig is StepsConfig
                           ? '${((app.progress[a.id] ?? (app.preview ? 0.64 : 0)) * (c.verifierConfig as StepsConfig).targetSteps).round()}'
                           : null,
-                      label: c.verifierType == VerifierType.steps
+                      label: app.preview
+                          ? 'SAMPLE PROGRESS'
+                          : c.verifierType == VerifierType.steps
                           ? 'STEPS RECORDED'
                           : 'ARRIVAL + DWELL',
                       color: a.state == AttemptState.completed
@@ -148,15 +218,16 @@ class TodayScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 22),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       const Icon(Icons.schedule, size: 17, color: T.muted),
-                      const SizedBox(width: 8),
                       Text(
                         '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal}',
                         style: const TextStyle(color: T.muted, fontSize: 13),
                       ),
-                      const Spacer(),
                       Text(
                         c.schedule.timezone,
                         style: const TextStyle(color: T.muted, fontSize: 10),
@@ -219,7 +290,7 @@ class TodayScreen extends ConsumerWidget {
                   Text(
                     active.isEmpty
                         ? 'A morning walk. Arriving at the gym. Pick something small enough to repeat.'
-                        : 'Your next window opens ${DateFormat('EEE, MMM d · HH:mm').format(nextWindow(active.first.schedule, now).toLocal())}. Reminders follow your chosen schedule.',
+                        : _nextWindowCopy(active.first, now),
                     style: const TextStyle(color: T.muted, height: 1.6),
                   ),
                   const SizedBox(height: 24),
@@ -293,8 +364,19 @@ class TodayScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 20),
         ],
+        ),
       ),
     );
+  }
+}
+
+String _nextWindowCopy(Commitment commitment, DateTime now) {
+  try {
+    final next = nextWindow(commitment.schedule, now);
+    final local = inScheduleTimezone(commitment.schedule, next);
+    return 'Your next window opens ${DateFormat('EEE, MMM d · HH:mm').format(local)}. Reminders follow your chosen schedule.';
+  } catch (_) {
+    return 'This commitment needs a valid schedule before reminders can continue.';
   }
 }
 
@@ -337,10 +419,56 @@ String goalDescription(Commitment c) {
       : '';
 }
 
-class CommitmentsScreen extends ConsumerWidget {
+class CommitmentsScreen extends ConsumerStatefulWidget {
   const CommitmentsScreen({super.key});
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CommitmentsScreen> createState() => _CommitmentsScreenState();
+}
+
+class _CommitmentsScreenState extends ConsumerState<CommitmentsScreen> {
+  /// Commitments with a status change in flight; their actions are disabled
+  /// so a slow network cannot produce duplicate updates.
+  final Set<String> _updating = {};
+
+  Future<void> _setStatus(AppController app, Commitment c, String status) async {
+    if (!_updating.add(c.id)) return;
+    setState(() {});
+    try {
+      await app.repository.update(c.id, {'status': status});
+    } catch (e) {
+      if (mounted) showMessage(context, friendlyError(e));
+    } finally {
+      _updating.remove(c.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _archive(AppController app, Commitment c) async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        title: const Text('Archive this commitment?'),
+        content: const Text(
+          'It leaves your list and its reminders stop. You can’t restore an archived commitment from the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep it'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Archive'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true && mounted) await _setStatus(app, c, 'archived');
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final cs = app.commitments
         .where((c) => c.status != CommitmentStatus.archived)
@@ -408,28 +536,27 @@ class CommitmentsScreen extends ConsumerWidget {
                   style: const TextStyle(color: T.muted, fontSize: 11),
                 ),
                 const SizedBox(height: 14),
-                Row(
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 4,
                   children: [
                     TextButton.icon(
                       onPressed: () => openWizard(context, commitment: c),
                       icon: const Icon(Icons.edit_outlined, size: 17),
                       label: const Text('Edit'),
                     ),
-                    const Spacer(),
                     TextButton(
-                      onPressed: () async {
-                        try {
-                          await app.repository.update(c.id, {
-                            'status': c.status == CommitmentStatus.active
-                                ? 'paused'
-                                : 'active',
-                          });
-                        } catch (e) {
-                          if (context.mounted) {
-                            showMessage(context, friendlyError(e));
-                          }
-                        }
-                      },
+                      onPressed: _updating.contains(c.id)
+                          ? null
+                          : () => _setStatus(
+                              app,
+                              c,
+                              c.status == CommitmentStatus.active
+                                  ? 'paused'
+                                  : 'active',
+                            ),
                       child: Text(
                         c.status == CommitmentStatus.active
                             ? 'Pause'
@@ -437,17 +564,9 @@ class CommitmentsScreen extends ConsumerWidget {
                       ),
                     ),
                     PopupMenuButton<String>(
-                      onSelected: (v) async {
-                        try {
-                          await app.repository.update(c.id, {
-                            'status': 'archived',
-                          });
-                        } catch (e) {
-                          if (context.mounted) {
-                            showMessage(context, friendlyError(e));
-                          }
-                        }
-                      },
+                      tooltip: 'More actions',
+                      enabled: !_updating.contains(c.id),
+                      onSelected: (_) => _archive(app, c),
                       itemBuilder: (_) => [
                         const PopupMenuItem(
                           value: 'archive',
@@ -498,34 +617,41 @@ class AttemptTile extends StatelessWidget {
     onTap: () => openAttempt(context, a),
     child: Panel(
       padding: 16,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            a.state == AttemptState.completed
-                ? Icons.check_circle_outline
-                : a.state == AttemptState.unverifiable
-                ? Icons.sensors_off
-                : Icons.circle_outlined,
-            color: stateColor(a.state),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              Icon(
+                a.state == AttemptState.completed
+                    ? Icons.check_circle_outline
+                    : a.state == AttemptState.unverifiable
+                    ? Icons.sensors_off
+                    : Icons.circle_outlined,
+                color: stateColor(a.state),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
                   title,
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  DateFormat('EEE, MMM d').format(DateTime.parse(a.date)),
-                  style: const TextStyle(color: T.muted, fontSize: 11),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          StatePill(a.state),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                DateFormat('EEE, MMM d').format(DateTime.parse(a.date)),
+                style: const TextStyle(color: T.muted, fontSize: 11),
+              ),
+              StatePill(a.state),
+            ],
+          ),
         ],
       ),
     ),
@@ -562,36 +688,41 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               const Eyebrow('The last seven days'),
               const SizedBox(height: 20),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: List.generate(7, (i) {
                   final date = DateTime.now().subtract(Duration(days: 6 - i));
                   final key = DateFormat('yyyy-MM-dd').format(date);
                   final done = app.attempts.any(
                     (a) => a.date == key && a.state == AttemptState.completed,
                   );
-                  return Column(
-                    children: [
-                      Text(
-                        DateFormat('E').format(date).substring(0, 1),
-                        style: const TextStyle(color: T.muted, fontSize: 10),
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        width: 32,
-                        height: 36,
-                        decoration: BoxDecoration(
+                  // Each day shares the width equally and never exceeds 32 dp,
+                  // so the week fits any screen width.
+                  return Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          DateFormat('E').format(date).substring(0, 1),
+                          style: const TextStyle(color: T.muted, fontSize: 10),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          height: 36,
+                          margin: const EdgeInsets.symmetric(horizontal: 2),
+                          constraints: const BoxConstraints(maxWidth: 32),
+                          decoration: BoxDecoration(
                           color: done
                               ? T.ok.withValues(alpha: .16)
                               : Colors.white.withValues(alpha: .04),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: Icon(
-                          done ? Icons.check : Icons.remove,
-                          color: done ? T.ok : T.muted,
-                          size: 17,
+                          child: Icon(
+                            done ? Icons.check : Icons.remove,
+                            color: done ? T.ok : T.muted,
+                            size: 17,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   );
                 }),
               ),
@@ -694,7 +825,11 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
     }
     final a = matches.first, c = app.commitment(a.commitmentId);
     if (c == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      // Keep a back button so a missing commitment can never strand the user.
+      return Scaffold(
+        appBar: AppBar(),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
     final terminal = a.state.isTerminal;
     final open = a.isWindowOpen;
@@ -706,7 +841,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
           if (terminal)
             IconButton(
               tooltip: 'Share result',
-              onPressed: () => run(() => _share(c, a, app.preview)),
+              onPressed: busy ? null : () => run(() => _share(c, a, app.preview)),
               icon: const Icon(Icons.ios_share),
             ),
         ],
@@ -714,9 +849,11 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: ListView(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
-            children: [
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
               RepaintBoundary(
                 key: cardKey,
                 child: Container(
@@ -824,6 +961,8 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                     child: Text(
                       busy
                           ? 'Please wait…'
+                          : app.preview
+                          ? 'Show sample progress'
                           : app.progress.containsKey(a.id)
                           ? 'Resume verification'
                           : 'Start verification',
@@ -838,7 +977,14 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 const SizedBox(height: 10),
                 if (open)
                   OutlinedButton(
-                    onPressed: busy ? null : () => run(() => app.snooze(a)),
+                    onPressed: busy
+                        ? null
+                        : app.preview
+                        ? () => showMessage(
+                            context,
+                            'Reminders don’t ring in local preview.',
+                          )
+                        : () => run(() => app.snooze(a)),
                     child: const Text('Snooze · silence this reminder'),
                   ),
                 if (failure != null) ...[
@@ -865,7 +1011,9 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 ),
                 if (app.preview)
                   TextButton(
-                    onPressed: () => run(() async {
+                    onPressed: busy
+                        ? null
+                        : () => run(() async {
                       await app.repository.call('previewComplete', {
                         'commitmentId': a.commitmentId,
                         'date': a.date,
@@ -889,6 +1037,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 ),
               const SizedBox(height: 20),
             ],
+            ),
           ),
         ),
       ),
@@ -956,7 +1105,12 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   Future<void> load() async {
     try {
       final p = await AlarmChannel.getPermissionStatus();
-      if (mounted) setState(() => status = p);
+      if (mounted) {
+        setState(() {
+          status = p;
+          error = null;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => error = friendlyError(e));
     }
@@ -965,6 +1119,9 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   Future<void> request(String which) async {
     try {
       await AlarmChannel.requestPermission(which);
+      if (which == 'notifications' && AppConfig.oneSignalId.isNotEmpty) {
+        await OneSignal.Notifications.requestPermission(true);
+      }
       await load();
     } catch (e) {
       if (mounted) setState(() => error = friendlyError(e));
@@ -974,8 +1131,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Make reminders reliable')),
-    body: ListView(
-      padding: const EdgeInsets.all(24),
+    body: _CenteredList(
       children: [
         const Text(
           'A little setup.\nA lot more follow-through.',
@@ -1028,7 +1184,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
           'Autostart on your phone',
           'Xiaomi, Redmi, Realme, Oppo and Vivo may need autostart enabled. Allow ShowdUp in the manufacturer’s settings.',
           'autostart',
-          false,
+          null,
         ),
         const SizedBox(height: 20),
         FilledButton(
@@ -1038,48 +1194,56 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       ],
     ),
   );
-  Widget _permission(
-    String title,
-    String copy,
-    String which,
-    bool? granted,
-  ) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: Panel(
-      padding: 18,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+  Widget _permission(String title, String copy, String which, bool? granted) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Panel(
+          padding: 18,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Icon(
+                    granted == true
+                        ? Icons.check_circle
+                        : granted == null
+                        ? Icons.info_outline
+                        : Icons.settings_outlined,
+                    color: granted == true ? T.ok : T.accent,
+                    size: 19,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                copy,
+                style: const TextStyle(
+                  color: T.muted,
+                  fontSize: 12,
+                  height: 1.6,
                 ),
               ),
-              Icon(
-                granted == true ? Icons.check_circle : Icons.settings_outlined,
-                color: granted == true ? T.ok : T.accent,
-                size: 19,
+              TextButton(
+                onPressed: () => request(which),
+                child: Text(
+                  granted == null
+                      ? 'Review device settings'
+                      : granted == true
+                      ? 'Review in settings'
+                      : 'Open settings / allow',
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            copy,
-            style: const TextStyle(color: T.muted, fontSize: 12, height: 1.6),
-          ),
-          TextButton(
-            onPressed: () => request(which),
-            child: Text(
-              granted == true ? 'Review in settings' : 'Open settings / allow',
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 }
 
 class ProScreen extends ConsumerStatefulWidget {
@@ -1095,14 +1259,15 @@ class _ProScreenState extends ConsumerState<ProScreen> {
     setState(() => busy = true);
     try {
       await action();
+      if (!mounted) return;
       setState(
         () => message =
             'Purchase information refreshed. Entitlements update after server confirmation.',
       );
     } catch (e) {
-      setState(() => message = friendlyError(e));
+      if (mounted) setState(() => message = friendlyError(e));
     } finally {
-      setState(() => busy = false);
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -1111,8 +1276,8 @@ class _ProScreenState extends ConsumerState<ProScreen> {
     final app = ref.watch(appProvider);
     return Scaffold(
       appBar: AppBar(),
-      body: ListView(
-        padding: const EdgeInsets.all(28),
+      body: _CenteredList(
+        padding: 28,
         children: [
           const Eyebrow('ShowdUp Pro', color: T.accent),
           const SizedBox(height: 18),
@@ -1184,8 +1349,19 @@ class _ProScreenState extends ConsumerState<ProScreen> {
           ),
           const SizedBox(height: 24),
           if (message != null) ErrorNotice(message!),
+          // A purchase made from local preview would not be tied to any
+          // account, so plans are only offered once signed in.
+          if (app.preview)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Local preview can’t make purchases. Sign in to view plans.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: T.accent, fontSize: 12, height: 1.6),
+              ),
+            ),
           FilledButton(
-            onPressed: busy || app.user?.isPro == true
+            onPressed: busy || app.preview || app.user?.isPro == true
                 ? null
                 : () => run(Billing.paywall),
             child: Text(
@@ -1197,7 +1373,7 @@ class _ProScreenState extends ConsumerState<ProScreen> {
             ),
           ),
           TextButton(
-            onPressed: busy ? null : () => run(Billing.restore),
+            onPressed: busy || app.preview ? null : () => run(Billing.restore),
             child: const Text('Restore purchases'),
           ),
           const Text(
@@ -1211,15 +1387,71 @@ class _ProScreenState extends ConsumerState<ProScreen> {
   }
 }
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key, required this.onLogout});
   final Future<void> Function() onLogout;
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  bool busy = false;
+
+  Future<void> _signOut() async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      await widget.onLogout();
+    } catch (e) {
+      if (mounted) showMessage(context, friendlyError(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _deleteAccount(AppController app) async {
+    if (busy) return;
+    final password = await showDialog<String>(
+      context: context,
+      builder: (_) => const _DeleteAccountDialog(),
+    );
+    if (password == null || !mounted) return;
+    setState(() => busy = true);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final email = user?.email;
+      if (user == null || email == null) {
+        throw StateError('Sign in again before deleting your account.');
+      }
+      // The server only deletes an account after a recent sign-in, so confirm
+      // the password first and send a freshly issued token.
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: email, password: password),
+      );
+      await user.getIdToken(true);
+      await app.repository.call('deleteAccount', {});
+    } catch (e) {
+      if (mounted) {
+        setState(() => busy = false);
+        showMessage(context, friendlyError(e));
+      }
+      return;
+    }
+    // The account no longer exists: always leave the session.
+    try {
+      await widget.onLogout();
+    } catch (_) {}
+    if (mounted) setState(() => busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
-    return ListView(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
-      children: [
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
         const PageHeading('Your app, your rules.', 'Settings'),
         Panel(
           child: Row(
@@ -1299,40 +1531,18 @@ class SettingsScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 24),
         OutlinedButton(
-          onPressed: onLogout,
-          child: Text(app.preview ? 'Leave preview' : 'Sign out'),
+          onPressed: busy ? null : _signOut,
+          child: Text(
+            busy
+                ? 'Please wait…'
+                : app.preview
+                ? 'Leave preview'
+                : 'Sign out',
+          ),
         ),
         if (!app.preview)
           TextButton(
-            onPressed: () async {
-              final accepted = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Delete your account?'),
-                  content: const Text(
-                    'This permanently deletes your commitments and history. Cancel any subscription in Google Play separately.',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('Keep account'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Delete account'),
-                    ),
-                  ],
-                ),
-              );
-              if (accepted == true) {
-                try {
-                  await app.repository.call('deleteAccount', {});
-                  await onLogout();
-                } catch (e) {
-                  if (context.mounted) showMessage(context, friendlyError(e));
-                }
-              }
-            },
+            onPressed: busy ? null : () => _deleteAccount(app),
             child: const Text(
               'Delete account',
               style: TextStyle(color: T.danger),
@@ -1355,6 +1565,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
       ],
+      ),
     );
   }
 
@@ -1377,13 +1588,77 @@ class SettingsScreen extends ConsumerWidget {
   );
 }
 
+class _DeleteAccountDialog extends StatefulWidget {
+  const _DeleteAccountDialog();
+  @override
+  State<_DeleteAccountDialog> createState() => _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
+  final password = TextEditingController();
+  String? error;
+
+  @override
+  void dispose() {
+    password.dispose();
+    super.dispose();
+  }
+
+  void _confirm() {
+    if (password.text.isEmpty) {
+      setState(() => error = 'Enter your password to confirm.');
+      return;
+    }
+    Navigator.pop(context, password.text);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    scrollable: true,
+    title: const Text('Delete your account?'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'This permanently deletes your commitments and history. Cancel any subscription in Google Play separately.',
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: password,
+          obscureText: true,
+          autofillHints: const [AutofillHints.password],
+          decoration: InputDecoration(
+            labelText: 'Confirm with your password',
+            errorText: error,
+          ),
+          onSubmitted: (_) => _confirm(),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Keep account'),
+      ),
+      TextButton(
+        onPressed: _confirm,
+        child: const Text(
+          'Delete account',
+          style: TextStyle(color: T.danger),
+        ),
+      ),
+    ],
+  );
+}
+
 class PrivacyScreen extends StatelessWidget {
   const PrivacyScreen({super.key});
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Privacy & verification')),
-    body: ListView(
-      padding: const EdgeInsets.all(28),
+    body: _CenteredList(
+      padding: 28,
       children: [
         const Text(
           'Trust comes first.',

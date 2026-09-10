@@ -83,6 +83,19 @@ class AlarmChannel {
       await _m.invokeMethod<bool>('requestPermission', {'which': which}) ??
       false;
 
+  /// Cold start and `onNewIntent` both land here. Native reads the intent
+  /// extra and `showdup://today?attemptId=…`. Missing-plugin (tests,
+  /// preview) must not throw.
+  static Future<String?> getLaunchAttempt() async {
+    try {
+      final value = await _m.invokeMethod<dynamic>('getLaunchAttempt');
+      if (value is String && value.isNotEmpty) return value;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Stream<AlarmEvent> events() =>
       _e.receiveBroadcastStream().map((e) => AlarmEvent.fromMap(e as Map));
 }

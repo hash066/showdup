@@ -1,5 +1,6 @@
 import 'enums.dart';
 import 'verifier_config.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 class CommitmentSchedule {
   const CommitmentSchedule({
@@ -15,24 +16,32 @@ class CommitmentSchedule {
   final String windowEndLocal; // "09:00"
   final String timezone; // IANA, e.g. "Asia/Kolkata"
 
+  /// Mirrors scheduleSchema in functions/src/validation.ts.
   String? validate() {
     if (daysOfWeek.isEmpty) return 'Pick at least one day.';
     if (daysOfWeek.any((d) => d < 1 || d > 7)) return 'Invalid weekday.';
+    if (daysOfWeek.toSet().length != daysOfWeek.length) {
+      return 'Pick each day only once.';
+    }
     final s = _mins(windowStartLocal), e = _mins(windowEndLocal);
     if (s == null || e == null) return 'Times must be HH:mm.';
     if (e <= s) return 'Window must end after it starts.';
     if (e - s < 15) return 'Window must be at least 15 minutes.';
+    if (timezone.trim().isEmpty) return 'Choose a valid timezone.';
+    try {
+      // Untrimmed, exactly as the server and native side will read it.
+      tz.getLocation(timezone);
+    } catch (_) {
+      return 'Choose a valid IANA timezone, such as Asia/Kolkata.';
+    }
     return null;
   }
 
+  static final _clock = RegExp(r'^([01]\d|2[0-3]):[0-5]\d$');
+
   static int? _mins(String hhmm) {
-    final p = hhmm.split(':');
-    if (p.length != 2) return null;
-    final h = int.tryParse(p[0]), m = int.tryParse(p[1]);
-    if (h == null || m == null || h < 0 || m < 0 || h > 23 || m > 59) {
-      return null;
-    }
-    return h * 60 + m;
+    if (!_clock.hasMatch(hhmm)) return null;
+    return int.parse(hhmm.substring(0, 2)) * 60 + int.parse(hhmm.substring(3));
   }
 
   Map<String, dynamic> toJson() => {
@@ -135,7 +144,11 @@ class Commitment {
       verifierConfig.validate() ??
       schedule.validate() ??
       reminder.validate() ??
-      (title.trim().isEmpty ? 'Give it a name.' : null);
+      (title.trim().isEmpty
+          ? 'Give it a name.'
+          : title.trim().length > 80
+          ? 'Keep the name to 80 characters or fewer.'
+          : null);
 
   Map<String, dynamic> toJson() => {
     'ownerUid': ownerUid,

@@ -83,6 +83,8 @@ class LocationChannel {
   static Future<bool> isWatching() async =>
       await _m.invokeMethod<bool>('isWatching') ?? false;
 
-  static final Stream<LocationEvent> _stream = _e.receiveBroadcastStream().map((e) => LocationEvent.fromMap(e as Map));
+  static final Stream<LocationEvent> _stream = _e.receiveBroadcastStream().map(
+    (e) => LocationEvent.fromMap(e as Map),
+  );
   static Stream<LocationEvent> events() => _stream;
 }

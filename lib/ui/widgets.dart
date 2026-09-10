@@ -20,12 +20,21 @@ class Brand extends StatelessWidget {
         child: Icon(Icons.check_rounded, color: T.bg, size: size),
       ),
       const SizedBox(width: 10),
-      Text(
-        'ShowdUp',
-        style: TextStyle(
-          fontSize: size,
-          fontWeight: FontWeight.w800,
-          letterSpacing: -1,
+      // The wordmark must never wrap mid-word; on narrow screens with large
+      // text it scales down to the space available instead of overflowing.
+      Flexible(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            'ShowdUp',
+            maxLines: 1,
+            style: TextStyle(
+              fontSize: size,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -1,
+            ),
+          ),
         ),
       ),
     ],
@@ -87,42 +96,62 @@ class ProgressOrbit extends StatelessWidget {
   final Color color;
   @override
   Widget build(BuildContext context) => Semantics(
-    label: '$label ${(progress * 100).round()} percent',
-    child: SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _OrbitPainter(progress, color),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              progress >= 1
-                  ? Icons.check_rounded
-                  : Icons.directions_walk_rounded,
-              color: color,
-              size: 30,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              value ?? '${(progress * 100).round()}%',
-              style: TextStyle(
-                fontSize: size * .2,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -2,
+    label: label.toLowerCase(),
+    value: '${(progress * 100).round()} percent',
+    readOnly: true,
+    child: ExcludeSemantics(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(
+          painter: _OrbitPainter(progress, color),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                progress >= 1
+                    ? Icons.check_rounded
+                    : Icons.directions_walk_rounded,
+                color: color,
+                size: 30,
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: const TextStyle(
-                color: T.muted,
-                fontSize: 10,
-                letterSpacing: 2,
-                fontWeight: FontWeight.w600,
+              const SizedBox(height: 10),
+              SizedBox(
+                width: size * .72,
+                height: size * .25,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    value ?? '${(progress * 100).round()}%',
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: size * .2,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -2,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              SizedBox(
+                width: size * .72,
+                height: 24,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: T.muted,
+                      fontSize: 10,
+                      letterSpacing: 2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -225,12 +254,22 @@ class ErrorNotice extends StatelessWidget {
       padding: 16,
       color: T.danger.withValues(alpha: .10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.info_outline, color: T.accent),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: const TextStyle(fontSize: 13))),
-          if (onRetry != null)
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          // Retry sits under the message so large text never squeezes the
+          // message into a sliver beside the button.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message, style: const TextStyle(fontSize: 13)),
+                if (onRetry != null)
+                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+              ],
+            ),
+          ),
         ],
       ),
     ),

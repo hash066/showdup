@@ -67,9 +67,10 @@ class Attempt {
     evidence: j['evidence'] == null
         ? null
         : Map<String, dynamic>.from(j['evidence'] as Map),
-    endedReason: j['endedReason'] == null
-        ? null
-        : EndedReason.from(j['endedReason'] as String),
+    // Unknown reasons are dropped rather than failing the whole attempt.
+    endedReason: EndedReason.values
+        .where((r) => r.wire == j['endedReason'])
+        .firstOrNull,
   );
 
   static DateTime? _dt(dynamic v) {

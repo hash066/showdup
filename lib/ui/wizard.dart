@@ -31,7 +31,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       maxReminders = 6,
       dwell = 5,
       radius = 150;
-  bool loud = false, busy = false;
+  bool loud = false, busy = false, locating = false;
   String? error;
   VerifierType type = VerifierType.steps;
   Set<int> days = {1, 2, 3, 4, 5};
@@ -127,6 +127,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       if (!app.preview) {
         final verifier = VerifierRegistry().create(type);
         final availability = await verifier.checkAvailability(config);
+        if (!mounted) return;
         if (!availability.available) {
           setState(
             () => error =
@@ -163,20 +164,24 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   }
 
   Future<void> currentLocation() async {
-    setState(() => busy = true);
+    if (locating) return;
+    setState(() {
+      locating = true;
+      error = null;
+    });
     try {
       await AlarmChannel.requestPermission('location');
       final p = await const MethodChannel(
         'app.showdup/location',
       ).invokeMapMethod<String, dynamic>('currentLocation');
-      if (p != null) {
+      if (p != null && mounted) {
         lat.text = (p['lat'] as num).toStringAsFixed(6);
         lng.text = (p['lng'] as num).toStringAsFixed(6);
       }
     } catch (e) {
-      setState(() => error = friendlyError(e));
+      if (mounted) setState(() => error = friendlyError(e));
     } finally {
-      setState(() => busy = false);
+      if (mounted) setState(() => locating = false);
     }
   }
 
@@ -211,9 +216,11 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               ),
             ),
             Expanded(
-              child: ListView(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
-                children: [
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                   Eyebrow('Step ${page + 1} of 4'),
                   const SizedBox(height: 12),
                   Text(
@@ -237,52 +244,67 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                     2 => _reminders(),
                     _ => _review(),
                   },
-                  if (error != null) ...[
-                    const SizedBox(height: 18),
-                    ErrorNotice(error!),
-                    if (!ref.read(appProvider).preview)
-                      TextButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) => const PermissionsScreen(),
-                          ),
-                        ),
-                        child: const Text('Open permissions & reliability'),
-                      ),
-                  ],
                 ],
+                ),
               ),
             ),
-            SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-                child: Row(
-                  children: [
-                    if (page > 0) ...[
-                      IconButton(
-                        onPressed: busy ? null : () => setState(() => page--),
-                        icon: const Icon(Icons.arrow_back),
+            Flexible(
+              child: SafeArea(
+                top: false,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (error != null) ...[
+                        ErrorNotice(error!),
+                        if (!ref.read(appProvider).preview)
+                          TextButton(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                builder: (_) => const PermissionsScreen(),
+                              ),
+                            ),
+                            child: const Text('Open permissions & reliability'),
+                          ),
+                      ],
+                      Row(
+                        children: [
+                          if (page > 0) ...[
+                            IconButton(
+                              tooltip: 'Back',
+                              onPressed: busy || locating
+                                  ? null
+                                  : () => setState(() {
+                                      page--;
+                                      error = null;
+                                    }),
+                              icon: const Icon(Icons.arrow_back),
+                            ),
+                            const SizedBox(width: 10),
+                          ],
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: busy || locating ? null : next,
+                              child: Text(
+                                busy
+                                    ? 'Saving…'
+                                    : page == 3
+                                    ? widget.existing == null
+                                          ? 'I’m showing up  →'
+                                          : 'Save changes'
+                                    : 'Continue  →',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 10),
                     ],
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: busy ? null : next,
-                        child: Text(
-                          busy
-                              ? 'Saving…'
-                              : page == 3
-                              ? widget.existing == null
-                                    ? 'I’m showing up  →'
-                                    : 'Save changes'
-                              : 'Continue  →',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -304,24 +326,30 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     const SizedBox(height: 18),
     const Eyebrow('What counts as done?'),
     const SizedBox(height: 14),
-    Row(
-      children: [
-        Expanded(
-          child: _typeCard(
-            VerifierType.steps,
-            Icons.directions_walk,
-            'Record steps',
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _typeCard(
+    LayoutBuilder(
+      builder: (context, constraints) {
+        final cards = [
+          _typeCard(VerifierType.steps, Icons.directions_walk, 'Record steps'),
+          _typeCard(
             VerifierType.location,
             Icons.place_outlined,
             'Arrive & stay',
           ),
-        ),
-      ],
+        ];
+        if (constraints.maxWidth < 360 ||
+            MediaQuery.textScalerOf(context).scale(16) > 22) {
+          return Column(
+            children: [cards.first, const SizedBox(height: 12), cards.last],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: cards.first),
+            const SizedBox(width: 12),
+            Expanded(child: cards.last),
+          ],
+        );
+      },
     ),
     const SizedBox(height: 24),
     if (type == VerifierType.steps) ...[
@@ -339,7 +367,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               ),
             ),
             Slider(
-              value: target.toDouble(),
+              value: target.toDouble().clamp(200, 20000),
               min: 200,
               max: 20000,
               divisions: 99,
@@ -367,9 +395,11 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       ),
       const SizedBox(height: 14),
       OutlinedButton.icon(
-        onPressed: busy ? null : currentLocation,
+        onPressed: busy || locating ? null : currentLocation,
         icon: const Icon(Icons.my_location),
-        label: const Text('Use my current location'),
+        label: Text(
+          locating ? 'Finding your location…' : 'Use my current location',
+        ),
       ),
       const SizedBox(height: 14),
       Row(
@@ -400,7 +430,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       const SizedBox(height: 20),
       Text('Arrival radius · $radius m'),
       Slider(
-        value: radius.toDouble(),
+        value: radius.toDouble().clamp(100, 500),
         min: 100,
         max: 500,
         divisions: 8,
@@ -420,27 +450,41 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       ),
     ],
   ];
-  Widget _typeCard(VerifierType value, IconData icon, String label) => InkWell(
-    onTap: () => setState(() => type = value),
-    borderRadius: BorderRadius.circular(20),
-    child: Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: type == value ? T.accent.withValues(alpha: .10) : T.surface,
+  Widget _typeCard(
+    VerifierType value,
+    IconData icon,
+    String label,
+  ) => Semantics(
+    button: true,
+    selected: type == value,
+    label: label,
+    child: ExcludeSemantics(
+      child: InkWell(
+        onTap: () => setState(() => type = value),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: type == value ? T.accent : Colors.transparent,
-        ),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: type == value ? T.accent : T.muted, size: 30),
-          const SizedBox(height: 12),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: type == value ? T.accent.withValues(alpha: .10) : T.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: type == value ? T.accent : Colors.transparent,
+            ),
           ),
-        ],
+          child: Column(
+            children: [
+              Icon(icon, color: type == value ? T.accent : T.muted, size: 30),
+              const SizedBox(height: 12),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     ),
   );
@@ -492,20 +536,37 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     String label,
     TimeOfDay time,
     void Function(TimeOfDay) change,
-  ) => Row(
-    children: [
-      Expanded(child: Text(label)),
-      TextButton(
+  ) => LayoutBuilder(
+    builder: (context, constraints) {
+      final button = TextButton(
         onPressed: () async {
           final v = await showTimePicker(context: context, initialTime: time);
-          if (v != null) change(v);
+          if (v != null && mounted) change(v);
         },
-        child: Text(
-          _clock(time),
-          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            _clock(time),
+            maxLines: 1,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+          ),
         ),
-      ),
-    ],
+      );
+      // Large text on a narrow screen stacks the label above the time.
+      if (constraints.maxWidth < 300 ||
+          MediaQuery.textScalerOf(context).scale(16) > 22) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [Text(label), button],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: Text(label)),
+          Flexible(child: button),
+        ],
+      );
+    },
   );
   List<Widget> _reminders() => [
     const Text(
@@ -522,7 +583,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           Slider(
-            value: interval.toDouble(),
+            value: interval.toDouble().clamp(5, 120),
             min: 5,
             max: 120,
             divisions: 23,
@@ -534,7 +595,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           Slider(
-            value: maxReminders.toDouble(),
+            value: maxReminders.toDouble().clamp(1, 20),
             min: 1,
             max: 20,
             divisions: 19,

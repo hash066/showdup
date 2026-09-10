@@ -31,6 +31,9 @@ class StepsConfig extends VerifierConfig {
       return 'Target must be between 200 and 20000 steps.';
     }
     if (minDurationMs < 60000) return 'Minimum duration must be 60s or more.';
+    if (minDurationMs > 86400000) {
+      return 'Minimum duration must be 24 hours or less.';
+    }
     return null;
   }
 
@@ -73,6 +76,10 @@ class LocationConfig extends VerifierConfig {
           'accurate enough to promise anything tighter.';
     }
     if (dwellMs < 60000) return 'Dwell must be at least 60s.';
+    if (dwellMs > 86400000) return 'Dwell must be 24 hours or less.';
+    if ((label?.length ?? 0) > 100) {
+      return 'Keep the place name to 100 characters or fewer.';
+    }
     return null;
   }
 

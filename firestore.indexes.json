@@ -23,6 +23,14 @@
         { "fieldPath": "state", "order": "ASCENDING" },
         { "fieldPath": "windowEndAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "attempts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "commitmentId", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

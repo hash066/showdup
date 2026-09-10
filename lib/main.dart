@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -23,6 +24,11 @@ Future<void> main() async {
           messagingSenderId: AppConfig.senderId,
           projectId: AppConfig.projectId,
         ),
+      );
+      await FirebaseAppCheck.instance.activate(
+        providerAndroid: AppConfig.useEmulators
+            ? const AndroidDebugProvider()
+            : const AndroidPlayIntegrityProvider(),
       );
       if (AppConfig.useEmulators) {
         await FirebaseAuth.instance.useAuthEmulator(

@@ -74,8 +74,21 @@ class AppUser {
     photoUrl: j['photoUrl'] as String?,
     oneSignalId: j['oneSignalId'] as String?,
     isPro: j['isPro'] as bool? ?? false,
+    proExpiresAt: _date(j['proExpiresAt']),
     stats: UserStats.fromJson(
       Map<String, dynamic>.from(j['stats'] as Map? ?? {}),
     ),
   );
+}
+
+DateTime? _date(dynamic v) {
+  if (v == null) return null;
+  if (v is DateTime) return v;
+  if (v is String) return DateTime.tryParse(v)?.toLocal();
+  // Firestore Timestamp, duck typed so this file needs no firebase import.
+  try {
+    return (v as dynamic).toDate() as DateTime;
+  } catch (_) {
+    return null;
+  }
 }

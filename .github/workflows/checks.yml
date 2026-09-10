@@ -1,26 +1,59 @@
 name: Check ShowdUp
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
 jobs:
-  check:
+  flutter:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          flutter-version: 3.41.7
+          cache: true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test
+      - run: flutter test --coverage
+      - run: flutter build apk --debug --dart-define-from-file=config.example.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: showdup-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  backend-and-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Test release config validator
+        run: node --test "scripts/*.test.mjs"
       - run: npm ci
         working-directory: functions
       - run: npm test
         working-directory: functions
-      - run: npx firebase-tools emulators:exec --only firestore --project demo-showdup "npm --prefix functions run test:rules"
-      - run: flutter build apk --debug
+      - name: Reject moderate-or-higher production dependency advisories
+        run: npm audit --omit=dev --audit-level=moderate
+        working-directory: functions
+      - name: Test Firestore rules in pinned emulator tooling
+        run: npx --yes firebase-tools@15.30.0 emulators:exec --only firestore --project demo-showdup "npm --prefix functions run test:rules"
