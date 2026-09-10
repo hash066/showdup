@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/services.dart';
 import '../models/attempt.dart';
 import '../models/enums.dart';
 import '../models/verifier_config.dart';
@@ -39,9 +40,14 @@ class StepsVerifier implements Verifier {
                   'This phone has no step counter. Choose arrival verification instead.',
             );
     } catch (e) {
+      // Native errors carry a sentence ("Move a few steps, then try again");
+      // never show the raw exception.
+      final message = e is PlatformException ? e.message?.trim() : null;
       return VerifierAvailability(
         available: false,
-        reason: 'Move a few steps and try again. $e',
+        reason: message == null || message.isEmpty
+            ? 'Move a few steps and try again.'
+            : message,
       );
     }
   }
@@ -87,11 +93,18 @@ class StepsVerifier implements Verifier {
             ),
           ),
         );
-    await StepsChannel.startTracking(
+    final started = await StepsChannel.startTracking(
       attemptId: attempt.id,
       baselineSteps: reading.cumulativeSteps,
       targetSteps: cfg.targetSteps,
+      minDurationMs: cfg.minDurationMs,
+      untilEpochMs: attempt.windowEndAt.millisecondsSinceEpoch,
     );
+    if (!started) {
+      throw StateError(
+        'Step tracking could not start. Check physical activity permission and try again.',
+      );
+    }
   }
 
   @override

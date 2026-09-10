@@ -42,6 +42,12 @@ void main() {
       DateTime.utc(2026, 9, 14, 1),
     );
   });
+  test('next window is strictly in the future while a window is open', () {
+    expect(
+      nextWindow(s, DateTime.utc(2026, 9, 8, 2)),
+      DateTime.utc(2026, 9, 9, 1),
+    );
+  });
   test('reminder count, spacing and terminal cancellation', () {
     final w = resolveWindow(s, DateTime(2026, 9, 8));
     final times = reminderTimes(w.start, w.end, const ReminderConfig());
@@ -71,6 +77,15 @@ void main() {
         timezone: 'Asia/Kolkata',
       ).validate(),
       isNotNull,
+    );
+    expect(
+      const CommitmentSchedule(
+        daysOfWeek: [1],
+        windowStartLocal: '06:30',
+        windowEndLocal: '09:00',
+        timezone: 'Not/A_Timezone',
+      ).validate(),
+      contains('valid IANA timezone'),
     );
   });
   test(

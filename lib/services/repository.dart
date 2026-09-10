@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/commitment.dart';
 import '../models/attempt.dart';
@@ -22,6 +23,22 @@ abstract class Repository {
   Future<void> close();
 }
 
+/// One unreadable document must not blank, or error, the whole list.
+List<T> _parseDocs<T>(
+  Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  T Function(String id, Map<String, dynamic> data) parse,
+) {
+  final out = <T>[];
+  for (final d in docs) {
+    try {
+      out.add(parse(d.id, d.data()));
+    } catch (e) {
+      debugPrint('Skipping unreadable ${d.reference.path}: $e');
+    }
+  }
+  return out;
+}
+
 class FirebaseRepository implements Repository {
   FirebaseRepository(this.uid);
   final String uid;
@@ -33,9 +50,7 @@ class FirebaseRepository implements Repository {
       .collection('commitments')
       .where('ownerUid', isEqualTo: uid)
       .snapshots()
-      .map(
-        (s) => s.docs.map((d) => Commitment.fromJson(d.id, d.data())).toList(),
-      );
+      .map((s) => _parseDocs(s.docs, Commitment.fromJson));
   @override
   Stream<List<Attempt>> attempts() => _db
       .collection('attempts')
@@ -43,7 +58,7 @@ class FirebaseRepository implements Repository {
       .orderBy('date', descending: true)
       .limit(1000)
       .snapshots()
-      .map((s) => s.docs.map((d) => Attempt.fromJson(d.id, d.data())).toList());
+      .map((s) => _parseDocs(s.docs, Attempt.fromJson));
   @override
   Stream<AppUser> profile() => _db
       .doc('users/$uid')
@@ -121,7 +136,8 @@ class PreviewRepository implements Repository {
       ),
     ];
     for (var i = 0; i < 7; i++) {
-      final day = DateTime(now.year, now.month, now.day - i);
+      // A UTC date carrier avoids device DST gaps at local midnight.
+      final day = DateTime.utc(now.year, now.month, now.day - i);
       final w = resolveWindow(s, day);
       final date =
           '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';

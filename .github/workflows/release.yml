@@ -1,0 +1,253 @@
+name: Production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      firebase_project_id:
+        description: Exact production Firebase project id
+        required: true
+        type: string
+      application_id:
+        description: Immutable Play application id
+        required: true
+        type: string
+      build_name:
+        description: User-visible version name, MAJOR.MINOR.PATCH (for example 1.0.0)
+        required: true
+        type: string
+      build_number:
+        description: Play versionCode, 1-2100000000 and higher than every versionCode already uploaded
+        required: true
+        type: string
+      deploy_firebase:
+        description: Deploy Functions, Firestore rules, and indexes after building
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Never run two production releases (or backend deploys) at the same time.
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate release inputs
+        env:
+          FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+          APPLICATION_ID: ${{ inputs.application_id }}
+          BUILD_NAME: ${{ inputs.build_name }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$FIREBASE_PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || fail "firebase_project_id is not a valid Firebase project id."
+          [[ "$FIREBASE_PROJECT_ID" != demo-* ]] || fail "firebase_project_id must not be a Firebase demo project."
+          [[ "$APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || fail "application_id is not a valid Android application id."
+          [[ "$BUILD_NAME" =~ ^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$ ]] || fail "build_name must be MAJOR.MINOR.PATCH, for example 1.0.0."
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] || fail "build_number must be a whole number without leading zeros."
+          (( BUILD_NUMBER <= 2100000000 )) || fail "build_number exceeds the Google Play maximum versionCode (2100000000)."
+          echo "Releasing $APPLICATION_ID $BUILD_NAME ($BUILD_NUMBER) against $FIREBASE_PROJECT_ID"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Test release config validator
+        run: node --test "scripts/*.test.mjs"
+      - run: npm ci
+        working-directory: functions
+      - run: npm test
+        working-directory: functions
+      - run: npm audit --omit=dev --audit-level=moderate
+        working-directory: functions
+      - run: npx --yes firebase-tools@15.30.0 emulators:exec --only firestore --project demo-showdup "npm --prefix functions run test:rules"
+
+  signed-android:
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.7
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Same Flutter gates as CI, run before any secret touches the disk.
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - name: Materialize and validate untracked release configuration
+        env:
+          RELEASE_CONFIG_JSON: ${{ secrets.RELEASE_CONFIG_JSON }}
+          EXPECTED_FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+        run: |
+          if [[ -z "$RELEASE_CONFIG_JSON" ]]; then
+            echo "::error::RELEASE_CONFIG_JSON is missing from the production environment."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$RELEASE_CONFIG_JSON" > config.release.json
+          node scripts/validate_release_config.mjs config.release.json "$EXPECTED_FIREBASE_PROJECT_ID"
+      - name: Materialize upload key and Gradle signing properties
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          APPLICATION_ID: ${{ inputs.application_id }}
+        run: |
+          missing=()
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing production secrets: ${missing[*]}"
+            exit 1
+          fi
+          umask 077
+          keystore="$RUNNER_TEMP/showdup-upload.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          [[ -s "$keystore" ]] || { echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore."; exit 1; }
+          # Fail fast on a wrong store password or alias instead of after the build.
+          if ! keytool -list -keystore "$keystore" -alias "$ANDROID_KEY_ALIAS" -storepass:env ANDROID_KEYSTORE_PASSWORD > /dev/null 2>&1; then
+            echo "::error::The upload keystore could not be opened with ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS."
+            exit 1
+          fi
+          # java.util.Properties treats backslash as an escape character.
+          prop() { printf '%s' "$1" | sed 's/\\/\\\\/g'; }
+          {
+            printf 'storeFile=%s\n' "$keystore"
+            printf 'storePassword=%s\n' "$(prop "$ANDROID_KEYSTORE_PASSWORD")"
+            printf 'keyAlias=%s\n' "$(prop "$ANDROID_KEY_ALIAS")"
+            printf 'keyPassword=%s\n' "$(prop "$ANDROID_KEY_PASSWORD")"
+            printf 'applicationId=%s\n' "$APPLICATION_ID"
+          } > android/key.properties
+      - name: Build signed app bundle
+        env:
+          BUILD_NAME: ${{ inputs.build_name }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: flutter build appbundle --release --dart-define-from-file=config.release.json --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+      - name: Verify signature and upload certificate, record release metadata
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          APPLICATION_ID: ${{ inputs.application_id }}
+          BUILD_NAME: ${{ inputs.build_name }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          out_dir=build/app/outputs/bundle/release
+          aab="$out_dir/app-release.aab"
+          [[ -s "$aab" ]] || fail "The release bundle was not produced."
+          # jarsigner -verify exits 0 for unsigned and partially signed bundles, and
+          # -strict also fails for every self-signed upload key, so read the report.
+          if ! report="$(jarsigner -verify "$aab" 2>&1)"; then
+            printf '%s\n' "$report"
+            fail "jarsigner rejected the bundle."
+          fi
+          printf '%s\n' "$report"
+          grep -Eq '^jar verified\.[[:space:]]*$' <<<"$report" || fail "The bundle is not signed."
+          if grep -Eqi 'jar is unsigned|unsigned entries' <<<"$report"; then
+            fail "The bundle is unsigned or contains unsigned entries."
+          fi
+          sha_of() { awk '$1 == "SHA256:" && !found { print $2; found = 1 }'; }
+          signer_sha256="$(keytool -printcert -jarfile "$aab" | sha_of)"
+          upload_sha256="$(keytool -list -v -keystore "$RUNNER_TEMP/showdup-upload.jks" -alias "$ANDROID_KEY_ALIAS" -storepass:env ANDROID_KEYSTORE_PASSWORD | sha_of)"
+          [[ -n "$signer_sha256" && "$signer_sha256" == "$upload_sha256" ]] || fail "The bundle is not signed by the upload key from the production environment."
+          (cd "$out_dir" && sha256sum app-release.aab > app-release.aab.sha256)
+          {
+            echo "git_sha=$GITHUB_SHA"
+            echo "application_id=$APPLICATION_ID"
+            echo "version_name=$BUILD_NAME"
+            echo "version_code=$BUILD_NUMBER"
+            echo "firebase_project_id=$FIREBASE_PROJECT_ID"
+            echo "upload_certificate_sha256=$signer_sha256"
+            echo "aab_sha256=$(cut -d ' ' -f 1 "$out_dir/app-release.aab.sha256")"
+          } > "$out_dir/release-info.txt"
+          cat "$out_dir/release-info.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: showdup-production-aab
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/bundle/release/app-release.aab.sha256
+            build/app/outputs/bundle/release/release-info.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing material and release configuration
+        if: always()
+        run: rm -f config.release.json android/key.properties "$RUNNER_TEMP/showdup-upload.jks"
+
+  firebase:
+    if: ${{ inputs.deploy_firebase }}
+    needs: signed-android
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+        working-directory: functions
+      - run: npm test
+        working-directory: functions
+      - run: npx --yes firebase-tools@15.30.0 emulators:exec --only firestore --project demo-showdup "npm --prefix functions run test:rules"
+      - name: Materialize Firebase service account
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+        run: |
+          if [[ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_JSON is missing from the production environment."
+            exit 1
+          fi
+          umask 077
+          key_file="$RUNNER_TEMP/firebase-service-account.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$key_file"
+          # Never print parse errors: they quote the key material. Do not echo project ids from the key.
+          if ! node -e 'try { const k = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const expected = process.argv[2]; process.exit(k.type === "service_account" && typeof k.project_id === "string" && k.project_id === expected ? 0 : 1); } catch { process.exit(1); }' "$key_file" "$FIREBASE_PROJECT_ID"; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT_JSON is not a service account key for the selected Firebase project."
+            exit 1
+          fi
+      - name: Deploy backend contracts
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
+          FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+        run: npx --yes firebase-tools@15.30.0 deploy --only functions,firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+      - name: Remove service account key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/firebase-service-account.json"

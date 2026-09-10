@@ -7,6 +7,7 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:showdup/main.dart';
 import 'package:showdup/core/theme.dart';
 import 'package:showdup/models/enums.dart';
+import 'package:showdup/models/attempt.dart';
 import 'package:showdup/services/controller.dart';
 import 'package:showdup/services/repository.dart';
 import 'package:showdup/ui/app.dart';
@@ -115,6 +116,80 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
   });
+  testWidgets('preview remains usable on a small screen with large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpWidget(
+      ShowdUpApp(prefs: await SharedPreferences.getInstance()),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: 'welcome');
+    await tester.ensureVisible(find.text('Explore local preview'));
+    await tester.tap(find.text('Explore local preview'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    for (final tab in ['Commitments', 'History', 'Settings', 'Today']) {
+      await tester.tap(find.text(tab).last);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: tab);
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+  test('today prioritizes open, upcoming, then latest terminal attempts', () {
+    final now = DateTime(2026, 9, 10, 10);
+    Attempt attempt(
+      String id,
+      DateTime start,
+      DateTime end,
+      AttemptState state,
+    ) => Attempt(
+      id: id,
+      commitmentId: id,
+      ownerUid: 'u',
+      date: '2026-09-10',
+      windowStartAt: start,
+      windowEndAt: end,
+      state: state,
+    );
+    final ordered = prioritizedTodayAttempts([
+      attempt(
+        'older-result',
+        now.subtract(const Duration(hours: 3)),
+        now.subtract(const Duration(hours: 2)),
+        AttemptState.completed,
+      ),
+      attempt(
+        'upcoming',
+        now.add(const Duration(hours: 2)),
+        now.add(const Duration(hours: 3)),
+        AttemptState.pending,
+      ),
+      attempt(
+        'open',
+        now.subtract(const Duration(minutes: 10)),
+        now.add(const Duration(minutes: 20)),
+        AttemptState.pending,
+      ),
+      attempt(
+        'latest-result',
+        now.subtract(const Duration(hours: 2)),
+        now.subtract(const Duration(hours: 1)),
+        AttemptState.abandoned,
+      ),
+    ], now);
+    expect(ordered.map((a) => a.id), [
+      'open',
+      'upcoming',
+      'latest-result',
+      'older-result',
+    ]);
+  });
   test(
     'preview persists edits and ending; free gate remains enforced',
     () async {
@@ -142,4 +217,3 @@ void main() {
     },
   );
 }
-

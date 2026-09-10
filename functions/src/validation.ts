@@ -7,6 +7,20 @@ const location=z.object({lat:n.min(-90).max(90),lng:n.min(-180).max(180),radiusM
 const clock=z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 export const scheduleSchema=z.object({daysOfWeek:z.array(n.int().min(1).max(7)).min(1).max(7).refine(a=>new Set(a).size===a.length),windowStartLocal:clock,windowEndLocal:clock,timezone:z.string().refine(s=>DateTime.now().setZone(s).isValid)}).strict().refine(s=>{const m=(v:string)=>+v.slice(0,2)*60 + +v.slice(3);return m(s.windowEndLocal)-m(s.windowStartLocal)>=15;},'Window must last at least 15 minutes and end on the same day.');
 export const commitmentSchema=z.object({title:z.string().trim().min(1).max(80),verifierType:z.enum(['steps','location']),verifierConfig:z.unknown(),schedule:scheduleSchema,reminder:z.object({intervalMinutes:n.int().min(5).max(120),volumeMode:z.enum(['gentle','loud']),maxReminders:n.int().min(1).max(20)}).strict(),restrictions:z.object({enabled:z.literal(false),packages:z.array(z.string()).max(0)}).strict()}).strict().superRefine((c,ctx)=>{if(!(c.verifierType==='steps'?steps:location).safeParse(c.verifierConfig).success)ctx.addIssue({code:z.ZodIssueCode.custom,message:'Invalid verifier configuration'});});
+export const reminderEventSchema=z.object({attemptId:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),eventId:z.string().min(1).max(64),type:z.enum(['fired','snoozed'])}).strict();
+export type ReminderEvent={type:'fired';index:number}|{type:'snoozed';clientAtMs:number};
+export function parseReminderEvent(type:'fired'|'snoozed',eventId:string,maxReminders:number,windowStartMs:number,windowEndMs:number):ReminderEvent|null{
+ if(!Number.isSafeInteger(maxReminders)||maxReminders<1||maxReminders>20||!Number.isFinite(windowStartMs)||!Number.isFinite(windowEndMs)||windowEndMs<=windowStartMs)return null;
+ if(type==='fired'){
+  const match=/^fired:(0|[1-9]\d?)$/.exec(eventId);if(!match)return null;
+  const index=Number(match[1]);
+  // The exact interval/window is checked by the caller. This guards the
+  // identifier and policy count without accepting spellings such as fired:00.
+  if(index>=maxReminders)return null;return {type,index};
+ }
+ const match=/^snoozed:(\d{13})$/.exec(eventId);if(!match)return null;
+ const clientAtMs=Number(match[1]);if(!Number.isSafeInteger(clientAtMs)||clientAtMs<windowStartMs||clientAtMs>windowEndMs)return null;return {type,clientAtMs};
+}
 export function validateVerifierConfig(type:VerifierType,cfg:unknown):asserts cfg is VerifierConfig{(type==='steps'?steps:location).parse(cfg);}
 export function checkStepsPlausibility(a:{stepsSinceBaseline:number;elapsedMs:number;config:StepsConfig}):string|null{
  if(!Number.isSafeInteger(a.stepsSinceBaseline)||!Number.isFinite(a.elapsedMs))return 'Invalid step reading';

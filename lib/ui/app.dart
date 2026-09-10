@@ -9,6 +9,7 @@ import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/config.dart';
 import '../core/theme.dart';
+import '../platform/alarm_channel.dart';
 import '../services/billing.dart';
 import '../services/controller.dart';
 import '../services/repository.dart';
@@ -31,6 +32,7 @@ class _AppEntryState extends State<AppEntry> {
   AppController? controller;
   bool entering = false;
   String? error;
+  OnPushSubscriptionChangeObserver? _pushObserver;
   @override
   void initState() {
     super.initState();
@@ -46,8 +48,19 @@ class _AppEntryState extends State<AppEntry> {
     try {
       final user = FirebaseAuth.instance.currentUser!;
       // A billing outage must never prevent free verification or signing in.
-      try { await Billing.identify(user.uid); } catch (_) {}
-      await const MethodChannel('app.showdup/alarm').invokeMethod('configureBackend', {'apiKey':AppConfig.apiKey,'appId':AppConfig.appId,'projectId':AppConfig.projectId,'senderId':AppConfig.senderId,'emulators':AppConfig.useEmulators,'host':AppConfig.emulatorHost});
+      try {
+        await Billing.identify(user.uid);
+      } catch (_) {}
+      await const MethodChannel(
+        'app.showdup/alarm',
+      ).invokeMethod('configureBackend', {
+        'apiKey': AppConfig.apiKey,
+        'appId': AppConfig.appId,
+        'projectId': AppConfig.projectId,
+        'senderId': AppConfig.senderId,
+        'emulators': AppConfig.useEmulators,
+        'host': AppConfig.emulatorHost,
+      });
       final doc = FirebaseFirestore.instance.doc('users/${user.uid}');
       final snap = await doc.get();
       if (!snap.exists) {
@@ -62,10 +75,23 @@ class _AppEntryState extends State<AppEntry> {
         });
       }
       if (AppConfig.oneSignalId.isNotEmpty) {
-        OneSignal.User.pushSubscription.addObserver((state) {
+        unawaited(OneSignal.Notifications.requestPermission(true));
+        if (_pushObserver != null) {
+          OneSignal.User.pushSubscription.removeObserver(_pushObserver!);
+        }
+        _pushObserver = (state) {
           final id = state.current.id;
-          if (id != null) doc.set({'oneSignalId': id}, SetOptions(merge: true));
-        });
+          if (id != null) {
+            // Best effort: a failed push-id sync must not surface as an
+            // uncaught error; the observer fires again on the next change.
+            unawaited(
+              doc
+                  .set({'oneSignalId': id}, SetOptions(merge: true))
+                  .catchError((Object _) {}),
+            );
+          }
+        };
+        OneSignal.User.pushSubscription.addObserver(_pushObserver!);
       }
       if (mounted) {
         setState(() {
@@ -84,13 +110,60 @@ class _AppEntryState extends State<AppEntry> {
   }
 
   void preview() {
-    setState(() => controller = AppController(PreviewRepository(widget.prefs)));
+    setState(() {
+      error = null;
+      controller = AppController(PreviewRepository(widget.prefs));
+    });
   }
 
+  /// Retries entering the signed-in session after a startup failure (for
+  /// example, first launch while offline) without forcing a new sign-in.
+  void retry() {
+    if (!AppConfig.configured || FirebaseAuth.instance.currentUser == null) {
+      setState(() => error = null);
+      return;
+    }
+    setState(() {
+      error = null;
+      entering = true;
+    });
+    _live();
+  }
+
+  bool _leaving = false;
   Future<void> logout() async {
+    if (_leaving) return;
+    _leaving = true;
     final old = controller;
-    await old?.shutdown();
-    if (mounted) setState(() => controller = null);
+    if (_pushObserver != null) {
+      OneSignal.User.pushSubscription.removeObserver(_pushObserver!);
+      _pushObserver = null;
+    }
+    // Leave the session immediately so sign-out never waits on native
+    // teardown; HomeShell would otherwise stay on screen until shutdown
+    // finishes, which widget tests treat as idle.
+    if (mounted) {
+      setState(() {
+        error = null;
+        controller = null;
+      });
+    }
+    try {
+      await old?.shutdown();
+    } finally {
+      try {
+        await Billing.logout();
+      } catch (_) {}
+      _leaving = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_pushObserver != null) {
+      OneSignal.User.pushSubscription.removeObserver(_pushObserver!);
+    }
+    super.dispose();
   }
 
   @override
@@ -111,6 +184,7 @@ class _AppEntryState extends State<AppEntry> {
         onPreview: preview,
         onAuthenticated: _live,
         error: widget.startupError ?? error,
+        onRetry: widget.startupError == null && error != null ? retry : null,
       ),
     );
   }
@@ -129,10 +203,12 @@ class WelcomeScreen extends StatelessWidget {
     required this.onPreview,
     required this.onAuthenticated,
     this.error,
+    this.onRetry,
   });
   final VoidCallback onPreview;
   final Future<void> Function() onAuthenticated;
   final String? error;
+  final VoidCallback? onRetry;
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
@@ -191,7 +267,7 @@ class WelcomeScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 22),
-                if (error != null) ErrorNotice(error!),
+                if (error != null) ErrorNotice(error!, onRetry: onRetry),
                 FilledButton(
                   onPressed: () => Navigator.push(
                     context,
@@ -200,16 +276,22 @@ class WelcomeScreen extends StatelessWidget {
                           AuthScreen(onAuthenticated: onAuthenticated),
                     ),
                   ),
-                  child: const Text(
-                    'Make my first commitment  →',
-                    style: TextStyle(fontWeight: FontWeight.w800),
+                  child: Text(
+                    MediaQuery.textScalerOf(context).scale(16) > 22
+                        ? 'Get started'
+                        : 'Make my first commitment  →',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
                 const SizedBox(height: 8),
                 Center(
                   child: TextButton(
                     onPressed: onPreview,
-                    child: const Text('Explore the app · local preview'),
+                    child: Text(
+                      MediaQuery.textScalerOf(context).scale(16) > 22
+                          ? 'Explore local preview'
+                          : 'Explore the app · local preview',
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -251,7 +333,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> submit() async {
-    if (!form.currentState!.validate()) return;
+    if (busy || !form.currentState!.validate()) return;
     if (!AppConfig.configured) {
       setState(
         () => error =
@@ -285,15 +367,47 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> resetPassword() async {
+    if (busy) return;
+    if (!AppConfig.configured) {
+      setState(() => error = 'Firebase is not configured in this build.');
+      return;
+    }
+    final address = email.text.trim();
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(address)) {
+      setState(() => error = 'Enter your email address to reset your password.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: address);
+      if (mounted) {
+        showMessage(
+          context,
+          'If an account exists, a reset email is on its way.',
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = friendlyError(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(),
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 500),
-        child: ListView(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
-          children: [
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             const Brand(),
             const SizedBox(height: 36),
             Text(
@@ -352,7 +466,8 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            if (error != null) ErrorNotice(error!),
+            if (error != null)
+              ErrorNotice(error!, onRetry: busy ? null : () => submit()),
             FilledButton(
               onPressed: busy ? null : submit,
               child: Text(
@@ -364,7 +479,12 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ),
             TextButton(
-              onPressed: () => setState(() => signingIn = !signingIn),
+              onPressed: busy
+                  ? null
+                  : () => setState(() {
+                      signingIn = !signingIn;
+                      error = null;
+                    }),
               child: Text(
                 signingIn
                     ? 'New here? Create an account'
@@ -373,30 +493,7 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
             if (signingIn)
               TextButton(
-                onPressed: busy
-                    ? null
-                    : () async {
-                        if (!AppConfig.configured) {
-                          setState(
-                            () => error =
-                                'Firebase is not configured in this build.',
-                          );
-                          return;
-                        }
-                        try {
-                          await FirebaseAuth.instance.sendPasswordResetEmail(
-                            email: email.text.trim(),
-                          );
-                          if (context.mounted) {
-                            showMessage(
-                              context,
-                              'If an account exists, a reset email is on its way.',
-                            );
-                          }
-                        } catch (e) {
-                          setState(() => error = friendlyError(e));
-                        }
-                      },
+                onPressed: busy ? null : resetPassword,
                 child: const Text('Forgot password?'),
               ),
             const SizedBox(height: 22),
@@ -405,6 +502,7 @@ class _AuthScreenState extends State<AuthScreen> {
               style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
             ),
           ],
+          ),
         ),
       ),
     ),
@@ -421,10 +519,16 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell>
     with WidgetsBindingObserver {
   int tab = 0;
+  String? _handledLaunch;
+  bool _launching = false;
+  bool _attemptOpen = false;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_consumeLaunch());
+    });
   }
 
   @override
@@ -435,7 +539,63 @@ class _HomeShellState extends ConsumerState<HomeShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) ref.read(appProvider).refresh();
+    if (state == AppLifecycleState.resumed) {
+      ref.read(appProvider).refresh();
+      unawaited(_consumeLaunch());
+    }
+  }
+
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) {
+    final uri = routeInformation.uri;
+    final ours = uri.scheme == 'showdup';
+    if (ours && mounted) setState(() => tab = 0);
+    unawaited(_consumeLaunch(fromNewIntent: ours));
+    return ours
+        ? Future.value(true)
+        : super.didPushRouteInformation(routeInformation);
+  }
+
+  @override
+  @Deprecated('Use didPushRouteInformation instead')
+  Future<bool> didPushRoute(String route) {
+    final ours = route.contains('showdup');
+    if (ours && mounted) setState(() => tab = 0);
+    unawaited(_consumeLaunch(fromNewIntent: ours));
+    return ours ? Future.value(true) : super.didPushRoute(route);
+  }
+
+  /// Opens Today, then the attempt named by the native launch extra / URI.
+  /// The same id is ignored on a later resume so recents do not re-push;
+  /// a fresh VIEW intent (`fromNewIntent`) may open it again.
+  Future<void> _consumeLaunch({bool fromNewIntent = false}) async {
+    if (!mounted || _launching) return;
+    _launching = true;
+    try {
+      final id = await AlarmChannel.getLaunchAttempt();
+      if (!mounted) return;
+      if (id == null || id.isEmpty) {
+        if (fromNewIntent) setState(() => tab = 0);
+        return;
+      }
+      if (id == _handledLaunch && (_attemptOpen || !fromNewIntent)) return;
+      _handledLaunch = id;
+      setState(() => tab = 0);
+      _attemptOpen = true;
+      unawaited(
+        Navigator.of(context)
+            .push(
+              MaterialPageRoute<void>(
+                builder: (_) => AttemptScreen(attemptId: id),
+              ),
+            )
+            .whenComplete(() => _attemptOpen = false),
+      );
+    } catch (_) {
+      _attemptOpen = false;
+    } finally {
+      _launching = false;
+    }
   }
 
   @override

@@ -49,15 +49,21 @@ class StepsChannel {
     await _m.invokeMethod<Map>('getStepCount') ?? const {},
   );
 
+  /// [minDurationMs] and [untilEpochMs] are read by TrackingService; without
+  /// them it falls back to 60 s and the reminder end (or two hours).
   static Future<bool> startTracking({
     required String attemptId,
     required int baselineSteps,
     required int targetSteps,
+    int? minDurationMs,
+    int? untilEpochMs,
   }) async =>
       await _m.invokeMethod<bool>('startTracking', {
         'attemptId': attemptId,
         'baselineSteps': baselineSteps,
         'targetSteps': targetSteps,
+        'minDurationMs': ?minDurationMs,
+        'untilEpochMs': ?untilEpochMs,
       }) ??
       false;
 
@@ -65,6 +71,8 @@ class StepsChannel {
       await _m.invokeMethod<bool>('stopTracking', {'attemptId': attemptId}) ??
       false;
 
-  static final Stream<StepEvent> _stream = _e.receiveBroadcastStream().map((e) => StepEvent.fromMap(e as Map));
+  static final Stream<StepEvent> _stream = _e.receiveBroadcastStream().map(
+    (e) => StepEvent.fromMap(e as Map),
+  );
   static Stream<StepEvent> events() => _stream;
 }

@@ -43,6 +43,11 @@ service cloud.firestore {
       allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
       // No client writes, ever. This is what makes completedAt trustworthy.
       allow write: if false;
+
+      // Reminder events are function-written only (recordReminderEvent).
+      match /events/{eventId} {
+        allow read, write: if false;
+      }
     }
   }
 }
