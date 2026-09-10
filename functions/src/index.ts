@@ -9,7 +9,7 @@ import {timingSafeEqual} from 'node:crypto';
 import {DateTime} from 'luxon';
 import {z} from 'zod';
 import {commitmentSchema,checkStepsPlausibility,checkLocationPlausibility,reminderEventSchema,parseReminderEvent} from './validation';
-import {resolveWindow,nextStats,evidenceWindow,closingState,proFromEvent,carryPro} from './domain';
+import {resolveWindow,nextStats,evidenceWindow,closingState,proFromEvent,carryPro,requiredMs,mintable,sameSchedule,hasPro} from './domain';
 import {Commitment,Attempt,StepsConfig,LocationConfig,AttemptState,attemptId,FREE_MAX_ACTIVE_COMMITMENTS,PRO_MAX_ACTIVE_COMMITMENTS} from './types';
 initializeApp();
 // Explicit so a future SDK default change cannot silently move functions away from the region the
@@ -27,15 +27,16 @@ const authMissing=(err:unknown)=>['auth/user-not-found','auth/invalid-uid'].incl
 async function safely(label:string,fn:()=>Promise<unknown>){try{await fn();}catch(err){logger.error(label,{err:err instanceof Error?err.message:String(err)});}}
 async function inBatches<T>(items:T[],fn:(t:T)=>Promise<unknown>,width=16){for(let i=0;i<items.length;i+=width)await Promise.all(items.slice(i,i+width).map(fn));}
 async function ensureAttempt(cid:string,c:Commitment,now=Date.now()){
- const local=DateTime.fromMillis(now,{zone:c.schedule.timezone});
- for(const day of [local,local.plus({days:1})]){const date=day.toISODate()!,w=resolveWindow(c.schedule,date);if(!c.schedule.daysOfWeek.includes(w.weekday)||w.start>now+3600000||w.end<now)continue;
- const ref=db.doc(`attempts/${attemptId(cid,date)}`);await db.runTransaction(async tx=>{const s=await tx.get(ref);if(s.exists)return;tx.create(ref,{commitmentId:cid,ownerUid:c.ownerUid,date,windowStartAt:Timestamp.fromMillis(w.start),windowEndAt:Timestamp.fromMillis(w.end),state:'pending',remindersFired:0,snoozes:0,createdAt:FieldValue.serverTimestamp()});});}
+ const local=DateTime.fromMillis(now,{zone:c.schedule.timezone}),need=requiredMs(c.verifierType,c.verifierConfig as {minDurationMs?:unknown;dwellMs?:unknown});
+ for(const day of [local,local.plus({days:1})]){const date=day.toISODate()!,w=resolveWindow(c.schedule,date);if(!c.schedule.daysOfWeek.includes(w.weekday)||!mintable(w,now,need))continue;
+ // Callers may hold a stale copy (a rollover page read before a pause or reschedule), so only the current active schedule mints.
+ const ref=db.doc(`attempts/${attemptId(cid,date)}`);await db.runTransaction(async tx=>{const [s,cs]=await Promise.all([tx.get(ref),tx.get(db.doc(`commitments/${cid}`))]),fresh=cs.data() as Commitment|undefined;if(s.exists||fresh?.status!=='active'||!fresh.schedule||!sameSchedule(fresh.schedule,c.schedule))return;tx.create(ref,{commitmentId:cid,ownerUid:c.ownerUid,date,windowStartAt:Timestamp.fromMillis(w.start),windowEndAt:Timestamp.fromMillis(w.end),state:'pending',remindersFired:0,snoozes:0,createdAt:FieldValue.serverTimestamp()});});}
 }
 // The attempt is also minted by syncAttempts/rolloverAttempts, so a failure here is logged rather than failing a committed write (a client retry would hit the cap).
 const tryEnsure=(cid:string,c:Commitment,now=Date.now())=>safely(`ensureAttempt ${cid}`,()=>ensureAttempt(cid,c,now));
 export const createCommitment=onCall({enforceAppCheck:true},async req=>{
  const u=uid(req),data=parse(commitmentSchema,req.data),ref=db.collection('commitments').doc();
- await db.runTransaction(async tx=>{const ur=db.doc(`users/${u}`),user=await tx.get(ur),active=await tx.get(db.collection('commitments').where('ownerUid','==',u).where('status','==','active')),limit=user.data()?.isPro?PRO_MAX_ACTIVE_COMMITMENTS:FREE_MAX_ACTIVE_COMMITMENTS;if(active.size>=limit)throw new HttpsError('resource-exhausted',user.data()?.isPro?'Pro includes up to 20 active commitments. Pause one first.':'Free includes one active commitment. Pause one or explore Pro.');tx.set(ur,{commitmentRevision:FieldValue.increment(1)},{merge:true});tx.create(ref,{...data,ownerUid:u,status:'active',createdAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp()});});
+ await db.runTransaction(async tx=>{const ur=db.doc(`users/${u}`),user=await tx.get(ur),active=await tx.get(db.collection('commitments').where('ownerUid','==',u).where('status','==','active')),pro=hasPro(user.data(),Date.now()),limit=pro?PRO_MAX_ACTIVE_COMMITMENTS:FREE_MAX_ACTIVE_COMMITMENTS;if(active.size>=limit)throw new HttpsError('resource-exhausted',pro?'Pro includes up to 20 active commitments. Pause one first.':'Free includes one active commitment. Pause one or explore Pro.');tx.set(ur,{commitmentRevision:FieldValue.increment(1)},{merge:true});tx.create(ref,{...data,ownerUid:u,status:'active',createdAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp()});});
  await tryEnsure(ref.id,{...data,ownerUid:u,status:'active'} as Commitment);return {commitmentId:ref.id};
 });
 export const updateCommitment=onCall({enforceAppCheck:true},async req=>{
@@ -46,8 +47,8 @@ export const updateCommitment=onCall({enforceAppCheck:true},async req=>{
  if(c.status==='archived')throw new HttpsError('failed-precondition','Archived commitments cannot be changed.');
  const ur=db.doc(`users/${u}`),user=await tx.get(ur),active=await tx.get(db.collection('commitments').where('ownerUid','==',u).where('status','==','active')),pending=await tx.get(db.collection('attempts').where('commitmentId','==',cid).where('state','==','pending')),now=Date.now();
  if(pending.docs.some(d=>(d.data().windowStartAt as Timestamp).toMillis()<=now)&&Object.keys(patch).some(k=>k!=='status'&&k!=='title'))throw new HttpsError('failed-precondition','End today before changing an open window or verifier.');
- const limit=user.data()?.isPro?PRO_MAX_ACTIVE_COMMITMENTS:FREE_MAX_ACTIVE_COMMITMENTS;
- if(status==='active'&&c.status!=='active'&&active.size>=limit)throw new HttpsError('resource-exhausted',user.data()?.isPro?'Pro includes up to 20 active commitments. Pause one first.':'Free includes one active commitment.');
+ const pro=hasPro(user.data(),now),limit=pro?PRO_MAX_ACTIVE_COMMITMENTS:FREE_MAX_ACTIVE_COMMITMENTS;
+ if(status==='active'&&c.status!=='active'&&active.size>=limit)throw new HttpsError('resource-exhausted',pro?'Pro includes up to 20 active commitments. Pause one first.':'Free includes one active commitment.');
  const merged={...c,...patch},data=parse(commitmentSchema,Object.fromEntries(['title','verifierType','verifierConfig','schedule','reminder','restrictions'].map(k=>[k,merged[k]])));
  tx.update(ref,{...data,status,updatedAt:FieldValue.serverTimestamp()});let stats=user.data()?.stats;
  // Pausing/archiving ends an OPEN window as abandoned (or expired if it already closed); an attempt whose window has not opened

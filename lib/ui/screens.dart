@@ -152,156 +152,212 @@ class TodayScreen extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-          PageHeading(
-            'A little better, today.',
-            DateFormat('EEEE, MMMM d').format(now),
-            trailing: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: T.surface,
-              ),
-              child: const Icon(Icons.wb_sunny_outlined, color: T.accent),
-            ),
-          ),
-          if (app.error != null) ErrorNotice(app.error!, onRetry: app.refresh),
-          if (app.loading)
-            const Center(child: CircularProgressIndicator())
-          else if (a != null && c != null) ...[
-            Panel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    alignment: WrapAlignment.spaceBetween,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 12,
-                    runSpacing: 8,
-                    children: [
-                      const Eyebrow('Your next promise'),
-                      StatePill(a.state),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    c.title,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -.8,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    goalDescription(c),
-                    style: const TextStyle(color: T.muted, fontSize: 13),
-                  ),
-                  const SizedBox(height: 24),
-                  Center(
-                    child: ProgressOrbit(
-                      progress: a.state == AttemptState.completed
-                          ? 1
-                          : app.progress[a.id] ?? (app.preview ? 0.64 : 0),
-                      value: a.state == AttemptState.completed
-                          ? 'Done'
-                          : c.verifierConfig is StepsConfig
-                          ? '${((app.progress[a.id] ?? (app.preview ? 0.64 : 0)) * (c.verifierConfig as StepsConfig).targetSteps).round()}'
-                          : null,
-                      label: app.preview
-                          ? 'SAMPLE PROGRESS'
-                          : c.verifierType == VerifierType.steps
-                          ? 'STEPS RECORDED'
-                          : 'ARRIVAL + DWELL',
-                      color: a.state == AttemptState.completed
-                          ? T.ok
-                          : T.accent,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      const Icon(Icons.schedule, size: 17, color: T.muted),
-                      Text(
-                        '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal}',
-                        style: const TextStyle(color: T.muted, fontSize: 13),
-                      ),
-                      Text(
-                        c.schedule.timezone,
-                        style: const TextStyle(color: T.muted, fontSize: 10),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: () => openAttempt(context, a),
-                    child: Text(
-                      a.state.isTerminal
-                          ? 'View today’s result  →'
-                          : a.isWindowOpen
-                          ? 'Open my commitment  →'
-                          : 'See the plan  →',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ],
+            PageHeading(
+              'A little better, today.',
+              DateFormat('EEEE, MMMM d').format(now),
+              trailing: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: T.surface,
+                ),
+                child: const Icon(Icons.wb_sunny_outlined, color: T.accent),
               ),
             ),
-            if (today.length > 1) ...[
+            if (app.error != null)
+              ErrorNotice(app.error!, onRetry: app.refresh),
+            if (app.loading)
+              const Center(child: CircularProgressIndicator())
+            else if (a != null && c != null) ...[
+              Panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
+                      runSpacing: 8,
+                      children: [
+                        const Eyebrow('Your next promise'),
+                        StatePill(a.state),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      c.title,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -.8,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      goalDescription(c),
+                      style: const TextStyle(color: T.muted, fontSize: 13),
+                    ),
+                    const SizedBox(height: 24),
+                    Center(
+                      child: ProgressOrbit(
+                        progress: a.state == AttemptState.completed
+                            ? 1
+                            : app.progress[a.id] ?? (app.preview ? 0.64 : 0),
+                        value: a.state == AttemptState.completed
+                            ? 'Done'
+                            : c.verifierConfig is StepsConfig
+                            ? '${((app.progress[a.id] ?? (app.preview ? 0.64 : 0)) * (c.verifierConfig as StepsConfig).targetSteps).round()}'
+                            : null,
+                        label: app.preview
+                            ? 'SAMPLE PROGRESS'
+                            : c.verifierType == VerifierType.steps
+                            ? 'STEPS RECORDED'
+                            : 'ARRIVAL + DWELL',
+                        color: a.state == AttemptState.completed
+                            ? T.ok
+                            : T.accent,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const Icon(Icons.schedule, size: 17, color: T.muted),
+                        Text(
+                          '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal}',
+                          style: const TextStyle(color: T.muted, fontSize: 13),
+                        ),
+                        Text(
+                          c.schedule.timezone,
+                          style: const TextStyle(color: T.muted, fontSize: 10),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      onPressed: () => openAttempt(context, a),
+                      child: Text(
+                        a.state.isTerminal
+                            ? 'View today’s result  →'
+                            : a.isWindowOpen
+                            ? 'Open my commitment  →'
+                            : 'See the plan  →',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (today.length > 1) ...[
+                const SizedBox(height: 20),
+                ...today
+                    .skip(1)
+                    .map(
+                      (a) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: AttemptTile(
+                          a,
+                          app.commitment(a.commitmentId)?.title ?? 'Commitment',
+                        ),
+                      ),
+                    ),
+              ],
               const SizedBox(height: 20),
-              ...today
-                  .skip(1)
-                  .map(
-                    (a) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: AttemptTile(
-                        a,
-                        app.commitment(a.commitmentId)?.title ?? 'Commitment',
+            ] else ...[
+              Panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      active.isEmpty
+                          ? Icons.flag_outlined
+                          : Icons.nights_stay_outlined,
+                      color: T.accent,
+                      size: 40,
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      active.isEmpty
+                          ? 'One promise.\nA place to start.'
+                          : 'You have a plan.',
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    Text(
+                      active.isEmpty
+                          ? 'A morning walk. Arriving at the gym. Pick something small enough to repeat.'
+                          : _nextWindowCopy(active.first, now),
+                      style: const TextStyle(color: T.muted, height: 1.6),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton(
+                      onPressed: () => active.isEmpty
+                          ? openWizard(context)
+                          : openWizard(context, commitment: active.first),
+                      child: Text(
+                        active.isEmpty
+                            ? 'Create a commitment  +'
+                            : 'View commitment',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
             ],
-            const SizedBox(height: 20),
-          ] else ...[
-            Panel(
-              child: Column(
+            Row(
+              children: [
+                Expanded(
+                  child: _Stat(
+                    '${app.user?.stats.currentStreak ?? 0}',
+                    'CURRENT STREAK',
+                    Icons.local_fire_department_outlined,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _Stat(
+                    '${app.user?.stats.completed ?? 0}',
+                    'TIMES SHOWED UP',
+                    Icons.check_circle_outline,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const Panel(
+              padding: 20,
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    active.isEmpty
-                        ? Icons.flag_outlined
-                        : Icons.nights_stay_outlined,
-                    color: T.accent,
-                    size: 40,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    active.isEmpty
-                        ? 'One promise.\nA place to start.'
-                        : 'You have a plan.',
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    active.isEmpty
-                        ? 'A morning walk. Arriving at the gym. Pick something small enough to repeat.'
-                        : _nextWindowCopy(active.first, now),
-                    style: const TextStyle(color: T.muted, height: 1.6),
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: () => active.isEmpty
-                        ? openWizard(context)
-                        : openWizard(context, commitment: active.first),
-                    child: Text(
-                      active.isEmpty
-                          ? 'Create a commitment  +'
-                          : 'View commitment',
+                  Icon(Icons.auto_awesome_outlined, color: T.accent, size: 20),
+                  SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Consistency is a quiet kind of progress.',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            height: 1.5,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'You don’t need a perfect day. Just a next step.',
+                          style: TextStyle(
+                            color: T.muted,
+                            fontSize: 12,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -309,61 +365,6 @@ class TodayScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
           ],
-          Row(
-            children: [
-              Expanded(
-                child: _Stat(
-                  '${app.user?.stats.currentStreak ?? 0}',
-                  'CURRENT STREAK',
-                  Icons.local_fire_department_outlined,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _Stat(
-                  '${app.user?.stats.completed ?? 0}',
-                  'TIMES SHOWED UP',
-                  Icons.check_circle_outline,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          const Panel(
-            padding: 20,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.auto_awesome_outlined, color: T.accent, size: 20),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Consistency is a quiet kind of progress.',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          height: 1.5,
-                        ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'You don’t need a perfect day. Just a next step.',
-                        style: TextStyle(
-                          color: T.muted,
-                          fontSize: 12,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
         ),
       ),
     );
@@ -430,7 +431,11 @@ class _CommitmentsScreenState extends ConsumerState<CommitmentsScreen> {
   /// so a slow network cannot produce duplicate updates.
   final Set<String> _updating = {};
 
-  Future<void> _setStatus(AppController app, Commitment c, String status) async {
+  Future<void> _setStatus(
+    AppController app,
+    Commitment c,
+    String status,
+  ) async {
     if (!_updating.add(c.id)) return;
     setState(() {});
     try {
@@ -710,11 +715,11 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                           margin: const EdgeInsets.symmetric(horizontal: 2),
                           constraints: const BoxConstraints(maxWidth: 32),
                           decoration: BoxDecoration(
-                          color: done
-                              ? T.ok.withValues(alpha: .16)
-                              : Colors.white.withValues(alpha: .04),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                            color: done
+                                ? T.ok.withValues(alpha: .16)
+                                : Colors.white.withValues(alpha: .04),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                           child: Icon(
                             done ? Icons.check : Icons.remove,
                             color: done ? T.ok : T.muted,
@@ -833,6 +838,8 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
     }
     final terminal = a.state.isTerminal;
     final open = a.isWindowOpen;
+    // Pending after the window ends until the server's next expiry sweep (≤15 min).
+    final closed = !terminal && DateTime.now().isAfter(a.windowEndAt);
     final failure = app.failures[a.id];
     return Scaffold(
       appBar: AppBar(
@@ -841,7 +848,9 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
           if (terminal)
             IconButton(
               tooltip: 'Share result',
-              onPressed: busy ? null : () => run(() => _share(c, a, app.preview)),
+              onPressed: busy
+                  ? null
+                  : () => run(() => _share(c, a, app.preview)),
               icon: const Icon(Icons.ios_share),
             ),
         ],
@@ -854,189 +863,191 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-              RepaintBoundary(
-                key: cardKey,
-                child: Container(
-                  color: T.bg,
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      const Brand(size: 19),
-                      const SizedBox(height: 28),
-                      StatePill(a.state),
-                      const SizedBox(height: 22),
-                      Text(
-                        c.title,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -1,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        goalDescription(c),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: T.muted, fontSize: 13),
-                      ),
-                      const SizedBox(height: 26),
-                      ProgressOrbit(
-                        progress: a.state == AttemptState.completed
-                            ? 1
-                            : app.progress[a.id] ?? (app.preview ? 0.64 : 0),
-                        color: a.state == AttemptState.completed
-                            ? T.ok
-                            : T.accent,
-                        label: terminal
-                            ? stateLabel(a.state).toUpperCase()
-                            : 'ONE STEP AT A TIME',
-                        value: a.state == AttemptState.completed
-                            ? 'Done'
-                            : null,
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        terminal
-                            ? _terminalCopy(a.state)
-                            : open
-                            ? 'You made the plan. Now make it happen.'
-                            : 'Your window hasn’t opened yet.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 15, height: 1.6),
-                      ),
-                      if (app.preview) ...[
-                        const SizedBox(height: 12),
-                        const Text(
-                          'PREVIEW · NOT A VERIFIED RESULT',
-                          style: TextStyle(
-                            color: T.accent,
-                            fontSize: 10,
-                            letterSpacing: 1,
+                RepaintBoundary(
+                  key: cardKey,
+                  child: Container(
+                    color: T.bg,
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        const Brand(size: 19),
+                        const SizedBox(height: 28),
+                        StatePill(a.state),
+                        const SizedBox(height: 22),
+                        Text(
+                          c.title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -1,
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        Text(
+                          goalDescription(c),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: T.muted, fontSize: 13),
+                        ),
+                        const SizedBox(height: 26),
+                        ProgressOrbit(
+                          progress: a.state == AttemptState.completed
+                              ? 1
+                              : app.progress[a.id] ?? (app.preview ? 0.64 : 0),
+                          color: a.state == AttemptState.completed
+                              ? T.ok
+                              : T.accent,
+                          label: terminal
+                              ? stateLabel(a.state).toUpperCase()
+                              : 'ONE STEP AT A TIME',
+                          value: a.state == AttemptState.completed
+                              ? 'Done'
+                              : null,
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          terminal
+                              ? _terminalCopy(a.state)
+                              : open
+                              ? 'You made the plan. Now make it happen.'
+                              : closed
+                              ? 'This window has closed. Your result will be recorded shortly.'
+                              : 'Your window hasn’t opened yet.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 15, height: 1.6),
+                        ),
+                        if (app.preview) ...[
+                          const SizedBox(height: 12),
+                          const Text(
+                            'PREVIEW · NOT A VERIFIED RESULT',
+                            style: TextStyle(
+                              color: T.accent,
+                              fontSize: 10,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Text(
+                          a.date,
+                          style: const TextStyle(color: T.muted, fontSize: 11),
+                        ),
                       ],
-                      const SizedBox(height: 8),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Panel(
+                  padding: 18,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Eyebrow('What counts as done'),
+                      const SizedBox(height: 12),
                       Text(
-                        a.date,
-                        style: const TextStyle(color: T.muted, fontSize: 11),
+                        c.verifierType == VerifierType.steps
+                            ? 'Steps prove recorded movement, not a walk. Keep your phone with you. Only new steps recorded within this window count.'
+                            : 'Location proves presence near your destination, not a workout. Open this screen and start verification. If you never open the app or tap a reminder, nothing verifies.',
+                        style: const TextStyle(
+                          color: T.muted,
+                          fontSize: 13,
+                          height: 1.6,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal} · ${c.schedule.timezone}',
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              Panel(
-                padding: 18,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Eyebrow('What counts as done'),
-                    const SizedBox(height: 12),
-                    Text(
-                      c.verifierType == VerifierType.steps
-                          ? 'Steps prove recorded movement, not a walk. Keep your phone with you. Only new steps recorded within this window count.'
-                          : 'Location proves presence near your destination, not a workout. Open this screen and start verification. If you never open the app or tap a reminder, nothing verifies.',
-                      style: const TextStyle(
-                        color: T.muted,
-                        fontSize: 13,
-                        height: 1.6,
+                const SizedBox(height: 20),
+                if (localError != null) ErrorNotice(localError!),
+                if (failure != null) ErrorNotice('Unable to verify. $failure'),
+                if (!terminal) ...[
+                  if (open)
+                    FilledButton(
+                      onPressed: busy ? null : () => run(() => app.start(a)),
+                      child: Text(
+                        busy
+                            ? 'Please wait…'
+                            : app.preview
+                            ? 'Show sample progress'
+                            : app.progress.containsKey(a.id)
+                            ? 'Resume verification'
+                            : 'Start verification',
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal} · ${c.schedule.timezone}',
-                      style: const TextStyle(fontSize: 12),
+                  if (!open && !closed)
+                    const Text(
+                      'Reminders start when your window opens.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: T.muted),
+                    ),
+                  const SizedBox(height: 10),
+                  if (open)
+                    OutlinedButton(
+                      onPressed: busy
+                          ? null
+                          : app.preview
+                          ? () => showMessage(
+                              context,
+                              'Reminders don’t ring in local preview.',
+                            )
+                          : () => run(() => app.snooze(a)),
+                      child: const Text('Snooze · silence this reminder'),
+                    ),
+                  if (failure != null) ...[
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => const PermissionsScreen(),
+                        ),
+                      ),
+                      child: const Text('Check permissions'),
+                    ),
+                    TextButton(
+                      onPressed: busy ? null : () => run(() => app.unable(a)),
+                      child: const Text('Record as unable to verify'),
                     ),
                   ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              if (localError != null) ErrorNotice(localError!),
-              if (failure != null) ErrorNotice('Unable to verify. $failure'),
-              if (!terminal) ...[
-                if (open)
-                  FilledButton(
-                    onPressed: busy ? null : () => run(() => app.start(a)),
-                    child: Text(
-                      busy
-                          ? 'Please wait…'
-                          : app.preview
-                          ? 'Show sample progress'
-                          : app.progress.containsKey(a.id)
-                          ? 'Resume verification'
-                          : 'Start verification',
+                  TextButton(
+                    onPressed: busy ? null : () => run(() => app.end(a)),
+                    child: const Text(
+                      'End today without completing',
+                      style: TextStyle(color: T.muted),
                     ),
                   ),
-                if (!open)
+                  if (app.preview)
+                    TextButton(
+                      onPressed: busy
+                          ? null
+                          : () => run(() async {
+                              await app.repository.call('previewComplete', {
+                                'commitmentId': a.commitmentId,
+                                'date': a.date,
+                              });
+                            }),
+                      child: const Text('Preview the completion screen'),
+                    ),
+                  const SizedBox(height: 12),
                   const Text(
-                    'Reminders start when your window opens.',
+                    'Ending today stops reminders and awards no completion. Tomorrow is a new opportunity.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: T.muted),
+                    style: TextStyle(color: T.muted, fontSize: 11, height: 1.5),
                   ),
-                const SizedBox(height: 10),
-                if (open)
-                  OutlinedButton(
+                ] else
+                  FilledButton.icon(
                     onPressed: busy
                         ? null
-                        : app.preview
-                        ? () => showMessage(
-                            context,
-                            'Reminders don’t ring in local preview.',
-                          )
-                        : () => run(() => app.snooze(a)),
-                    child: const Text('Snooze · silence this reminder'),
+                        : () => run(() => _share(c, a, app.preview)),
+                    icon: const Icon(Icons.ios_share),
+                    label: const Text('Share my day'),
                   ),
-                if (failure != null) ...[
-                  TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const PermissionsScreen(),
-                      ),
-                    ),
-                    child: const Text('Check permissions'),
-                  ),
-                  TextButton(
-                    onPressed: busy ? null : () => run(() => app.unable(a)),
-                    child: const Text('Record as unable to verify'),
-                  ),
-                ],
-                TextButton(
-                  onPressed: busy ? null : () => run(() => app.end(a)),
-                  child: const Text(
-                    'End today without completing',
-                    style: TextStyle(color: T.muted),
-                  ),
-                ),
-                if (app.preview)
-                  TextButton(
-                    onPressed: busy
-                        ? null
-                        : () => run(() async {
-                      await app.repository.call('previewComplete', {
-                        'commitmentId': a.commitmentId,
-                        'date': a.date,
-                      });
-                    }),
-                    child: const Text('Preview the completion screen'),
-                  ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Ending today stops reminders and awards no completion. Tomorrow is a new opportunity.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: T.muted, fontSize: 11, height: 1.5),
-                ),
-              ] else
-                FilledButton.icon(
-                  onPressed: busy
-                      ? null
-                      : () => run(() => _share(c, a, app.preview)),
-                  icon: const Icon(Icons.ios_share),
-                  label: const Text('Share my day'),
-                ),
-              const SizedBox(height: 20),
-            ],
+                const SizedBox(height: 20),
+              ],
             ),
           ),
         ),
@@ -1255,15 +1266,12 @@ class ProScreen extends ConsumerStatefulWidget {
 class _ProScreenState extends ConsumerState<ProScreen> {
   bool busy = false;
   String? message;
-  Future<void> run(Future<void> Function() action) async {
+  Future<void> run(Future<String?> Function() action) async {
     setState(() => busy = true);
     try {
-      await action();
+      final result = await action();
       if (!mounted) return;
-      setState(
-        () => message =
-            'Purchase information refreshed. Entitlements update after server confirmation.',
-      );
+      setState(() => message = result);
     } catch (e) {
       if (mounted) setState(() => message = friendlyError(e));
     } finally {
@@ -1452,119 +1460,121 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-        const PageHeading('Your app, your rules.', 'Settings'),
-        Panel(
-          child: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: T.accent.withValues(alpha: .15),
-                foregroundColor: T.accent,
-                child: const Icon(Icons.person_outline),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      app.user?.displayName.isNotEmpty == true
-                          ? app.user!.displayName
-                          : 'Your account',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 18,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      app.preview
-                          ? 'Local preview'
-                          : app.user?.isPro == true
-                          ? 'ShowdUp Pro'
-                          : 'ShowdUp Free',
-                      style: const TextStyle(color: T.muted, fontSize: 12),
-                    ),
-                  ],
+          const PageHeading('Your app, your rules.', 'Settings'),
+          Panel(
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: T.accent.withValues(alpha: .15),
+                  foregroundColor: T.accent,
+                  child: const Icon(Icons.person_outline),
                 ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        app.user?.displayName.isNotEmpty == true
+                            ? app.user!.displayName
+                            : 'Your account',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        app.preview
+                            ? 'Local preview'
+                            : app.user?.isPro == true
+                            ? 'ShowdUp Pro'
+                            : 'ShowdUp Free',
+                        style: const TextStyle(color: T.muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          _tile(
+            context,
+            Icons.notifications_active_outlined,
+            'Permissions & reliability',
+            'Steps, location, reminders and battery',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const PermissionsScreen(),
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 24),
-        _tile(
-          context,
-          Icons.notifications_active_outlined,
-          'Permissions & reliability',
-          'Steps, location, reminders and battery',
-          () => Navigator.push(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const PermissionsScreen()),
-          ),
-        ),
-        _tile(
-          context,
-          Icons.auto_awesome_outlined,
-          'Explore Pro',
-          'More commitments and full history',
-          () => Navigator.push(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const ProScreen()),
-          ),
-        ),
-        _tile(
-          context,
-          Icons.shield_outlined,
-          'Privacy & verification',
-          'What we collect and what we can prove',
-          () => Navigator.push(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const PrivacyScreen()),
-          ),
-        ),
-        const SizedBox(height: 20),
-        const Panel(
-          padding: 20,
-          child: Text(
-            'You always have an exit.\n“End today without completing” stops reminders and awards nothing. A sensor failure is never your failure.',
-            style: TextStyle(color: T.muted, fontSize: 13, height: 1.8),
-          ),
-        ),
-        const SizedBox(height: 24),
-        OutlinedButton(
-          onPressed: busy ? null : _signOut,
-          child: Text(
-            busy
-                ? 'Please wait…'
-                : app.preview
-                ? 'Leave preview'
-                : 'Sign out',
-          ),
-        ),
-        if (!app.preview)
-          TextButton(
-            onPressed: busy ? null : () => _deleteAccount(app),
-            child: const Text(
-              'Delete account',
-              style: TextStyle(color: T.danger),
             ),
           ),
-        const SizedBox(height: 20),
-        const Center(
-          child: Text(
-            'ShowdUp 1.0.0 · Made for follow-through',
-            style: TextStyle(color: T.muted, fontSize: 10),
+          _tile(
+            context,
+            Icons.auto_awesome_outlined,
+            'Explore Pro',
+            'More commitments and full history',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const ProScreen()),
+            ),
           ),
-        ),
-        if (app.preview && !AppConfig.configured)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
+          _tile(
+            context,
+            Icons.shield_outlined,
+            'Privacy & verification',
+            'What we collect and what we can prove',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const PrivacyScreen()),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Panel(
+            padding: 20,
             child: Text(
-              'Firebase, payments and push are not connected in this preview build.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: T.muted, fontSize: 11),
+              'You always have an exit.\n“End today without completing” stops reminders and awards nothing. A sensor failure is never your failure.',
+              style: TextStyle(color: T.muted, fontSize: 13, height: 1.8),
             ),
           ),
-      ],
+          const SizedBox(height: 24),
+          OutlinedButton(
+            onPressed: busy ? null : _signOut,
+            child: Text(
+              busy
+                  ? 'Please wait…'
+                  : app.preview
+                  ? 'Leave preview'
+                  : 'Sign out',
+            ),
+          ),
+          if (!app.preview)
+            TextButton(
+              onPressed: busy ? null : () => _deleteAccount(app),
+              child: const Text(
+                'Delete account',
+                style: TextStyle(color: T.danger),
+              ),
+            ),
+          const SizedBox(height: 20),
+          const Center(
+            child: Text(
+              'ShowdUp 1.0.0 · Made for follow-through',
+              style: TextStyle(color: T.muted, fontSize: 10),
+            ),
+          ),
+          if (app.preview && !AppConfig.configured)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text(
+                'Firebase, payments and push are not connected in this preview build.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: T.muted, fontSize: 11),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1643,10 +1653,7 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
       ),
       TextButton(
         onPressed: _confirm,
-        child: const Text(
-          'Delete account',
-          style: TextStyle(color: T.danger),
-        ),
+        child: const Text('Delete account', style: TextStyle(color: T.danger)),
       ),
     ],
   );

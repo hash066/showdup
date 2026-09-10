@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -152,7 +153,17 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       if (widget.existing == null) {
         await app.repository.create(data);
       } else {
-        await app.repository.update(widget.existing!.id, data);
+        // Send only what changed: the server refuses non-title edits while
+        // today's window is open, so a title fix must not carry the schedule.
+        final before = widget.existing!.toJson();
+        final patch = {
+          for (final e in data.entries)
+            if (jsonEncode(e.value) != jsonEncode(before[e.key]))
+              e.key: e.value,
+        };
+        if (patch.isNotEmpty) {
+          await app.repository.update(widget.existing!.id, patch);
+        }
       }
       await app.refresh();
       if (mounted) Navigator.pop(context);
@@ -221,30 +232,30 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                  Eyebrow('Step ${page + 1} of 4'),
-                  const SizedBox(height: 12),
-                  Text(
-                    [
-                      'Choose your finish line.',
-                      'Give it a place in your day.',
-                      'Reminders, on your terms.',
-                      'This is your promise.',
-                    ][page],
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -1,
-                      height: 1.15,
+                    Eyebrow('Step ${page + 1} of 4'),
+                    const SizedBox(height: 12),
+                    Text(
+                      [
+                        'Choose your finish line.',
+                        'Give it a place in your day.',
+                        'Reminders, on your terms.',
+                        'This is your promise.',
+                      ][page],
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -1,
+                        height: 1.15,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  ...switch (page) {
-                    0 => _goal(),
-                    1 => _schedule(),
-                    2 => _reminders(),
-                    _ => _review(),
-                  },
-                ],
+                    const SizedBox(height: 24),
+                    ...switch (page) {
+                      0 => _goal(),
+                      1 => _schedule(),
+                      2 => _reminders(),
+                      _ => _review(),
+                    },
+                  ],
                 ),
               ),
             ),

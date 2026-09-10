@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {resolveWindow,nextStats,evidenceWindow,closingState,proFromEvent,carryPro}=require('../lib/domain');
+const {resolveWindow,nextStats,evidenceWindow,closingState,proFromEvent,carryPro,requiredMs,mintable,sameSchedule,hasPro}=require('../lib/domain');
 const {commitmentSchema,checkStepsPlausibility,checkLocationPlausibility,reminderEventSchema,parseReminderEvent}=require('../lib/validation');
 const schedule={daysOfWeek:[1,2,3,4,5],windowStartLocal:'06:30',windowEndLocal:'09:00',timezone:'Asia/Kolkata'};
 const config={targetSteps:1000,minDurationMs:60000};
@@ -35,5 +35,14 @@ test('RevenueCat: cancellation and billing issue keep Pro until expiry; expirati
  assert.deepEqual(proFromEvent({type:'EXPIRATION',expiration_at_ms:now+day},now),{isPro:false,proExpiresAt:now+day});
  for(const type of ['SUBSCRIPTION_EXTENDED','TEMPORARY_ENTITLEMENT_GRANT','REFUND_REVERSED','UNCANCELLATION','PRODUCT_CHANGE','SUBSCRIPTION_PAUSED'])assert.equal(proFromEvent({type,expiration_at_ms:now+day},now).isPro,true);
  for(const type of ['TRANSFER','TEST','INVOICE_ISSUANCE',undefined])assert.equal(proFromEvent({type,expiration_at_ms:now+day},now),null);
+});
+test('attempts are minted only when the remaining window can still satisfy the verifier',()=>{
+ const m=60000,h=60*m,now=1e12;assert.equal(requiredMs('steps',{minDurationMs:30*m}),30*m);assert.equal(requiredMs('location',{dwellMs:5*m}),5*m);assert.equal(requiredMs('steps',{}),m);
+ assert.equal(mintable({start:now-110*m,end:now+10*m},now,30*m),false);assert.equal(mintable({start:now-90*m,end:now+30*m},now,30*m),true);
+ assert.equal(mintable({start:now+30*m,end:now+40*m},now,30*m),false);assert.equal(mintable({start:now+30*m,end:now+2*h},now,30*m),true);assert.equal(mintable({start:now+2*h,end:now+3*h},now,m),false);assert.equal(mintable({start:now-2*h,end:now-1},now,m),false);
+});
+test('schedule identity ignores key order; Pro stops at its stored expiry',()=>{
+ assert.equal(sameSchedule(schedule,{timezone:'Asia/Kolkata',windowEndLocal:'09:00',windowStartLocal:'06:30',daysOfWeek:[1,2,3,4,5]}),true);assert.equal(sameSchedule(schedule,{...schedule,windowStartLocal:'07:00'}),false);assert.equal(sameSchedule(schedule,{...schedule,daysOfWeek:[1,2]}),false);
+ const at=ms=>({toMillis:()=>ms});assert.equal(hasPro({isPro:true,proExpiresAt:null},1000),true);assert.equal(hasPro({isPro:true,proExpiresAt:at(2000)},1000),true);assert.equal(hasPro({isPro:true,proExpiresAt:at(1000)},1000),false);assert.equal(hasPro({isPro:'true'},1000),false);assert.equal(hasPro(undefined,1000),false);
 });
 test('transfer carries only the best still-active entitlement',()=>{const now=1000;assert.equal(carryPro([{isPro:false,proExpiresAt:null},{isPro:true,proExpiresAt:999},{isPro:'true',proExpiresAt:5000}],now),null);assert.deepEqual(carryPro([{isPro:true,proExpiresAt:2000},{isPro:true,proExpiresAt:5000}],now),{isPro:true,proExpiresAt:5000});assert.deepEqual(carryPro([{isPro:true,proExpiresAt:5000},{isPro:true,proExpiresAt:null}],now),{isPro:true,proExpiresAt:null})});

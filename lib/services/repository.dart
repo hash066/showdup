@@ -69,7 +69,18 @@ class FirebaseRepository implements Repository {
     String name,
     Map<String, dynamic> data,
   ) async => Map<String, dynamic>.from(
-    (await FirebaseFunctions.instance.httpsCallable(name).call(data)).data
+    (await FirebaseFunctions.instance
+                .httpsCallable(
+                  name,
+                  // Deleting a long history can outlast the 60 s client default; the server allows 300 s.
+                  options: HttpsCallableOptions(
+                    timeout: Duration(
+                      seconds: name == 'deleteAccount' ? 300 : 60,
+                    ),
+                  ),
+                )
+                .call(data))
+            .data
         as Map,
   );
   @override

@@ -124,6 +124,15 @@ test('callables require a signed-in user',async()=>{
  await assert.rejects(api.deleteAccount.run({data:{}}),e=>e.code==='unauthenticated');
 });
 
+test('no attempt is minted that could not be completed, and lapsed Pro gets the free cap',async()=>{
+ const {api,db,Timestamp}=admin(),now=Date.now(),today=new Date(now).toISOString().slice(0,10),endToday=Date.parse(`${today}T23:59:00Z`),as=u=>(name,data)=>api[name].run({data,auth:{uid:u,token:{auth_time:Date.now()/1000}}});
+ const tight=await as('mint-tight')('createCommitment',{...baseCommitment,verifierConfig:{targetSteps:200,minDurationMs:Math.max(60000,Math.min(86400000,endToday-now+3600000))}});
+ assert.equal((await db.doc(`attempts/${tight.commitmentId}_${today}`).get()).exists,false);
+ if(endToday-now>120000){const ok=await as('mint-ok')('createCommitment',baseCommitment);assert.equal((await db.doc(`attempts/${ok.commitmentId}_${today}`).get()).exists,true);}
+ await db.doc('users/pro-lapsed').set({isPro:true,proExpiresAt:Timestamp.fromMillis(now-1000)});await as('pro-lapsed')('createCommitment',baseCommitment);
+ await assert.rejects(as('pro-lapsed')('createCommitment',baseCommitment),e=>e.code==='resource-exhausted'&&/^Free/.test(e.message));
+});
+
 test('one malformed commitment cannot stop rollover from expiring other attempts',async()=>{
  const {api,db,Timestamp}=admin();
  await db.doc('commitments/rollover-broken').set({...baseCommitment,ownerUid:'rollover-test',status:'active',schedule:{...baseCommitment.schedule,windowStartLocal:'10:00',windowEndLocal:'09:00'}});
