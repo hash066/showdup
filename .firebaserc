@@ -1,1 +1,5 @@
-{"projects":{"default":"demo-showdup"}}
+{
+  "projects": {
+    "default": "showdup-f0799"
+  }
+}

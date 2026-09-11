@@ -35,6 +35,8 @@ concurrency:
 
 jobs:
   quality:
+    # Signing secrets must only ever be exposed to reviewed code on main; every later job needs this one.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
