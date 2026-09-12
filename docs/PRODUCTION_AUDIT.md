@@ -112,6 +112,9 @@ Firebase CLI is signed into any other account.
 - [ ] Complete Data safety, Accessibility, foreground-service, exact-alarm and
   full-screen-intent declarations plus overlay/special-use FGS review and any
   requested demonstration video.
+- [ ] Enable Places API (New), add a separate Android-restricted key for the
+  debug and final Play signing certificates, cap its quota, and test gym and
+  destination search. Redeploy the updated public privacy policy afterward.
 - [ ] Finish activation of the linked Cloud Billing account. Blaze is linked
   and Google Cloud account verification is currently under review, but the
   billing account is not yet open, so the six social functions and Firestore
@@ -127,7 +130,8 @@ Firebase CLI is signed into any other account.
   happy/uneasy/sad/cracked/recovery/burst PNG asset set.
 - [ ] Install from an internal/closed Play track and pass purchase, restore,
   cancel, renewal, grace-period, refund/revocation and expiry tests.
-- [ ] Pass the physical Android 13/14/15 matrix for steps, location dwell,
+- [ ] Pass the physical Android 13/14/15 matrix for GPS walking time/distance,
+  destination arrival, gym dwell,
   denied permissions, reboot, force-stop, Doze, OEM battery saving, overlapping
   commitments and Accessibility escape behavior.
 - [ ] Satisfy the production-access testing requirement shown for this specific

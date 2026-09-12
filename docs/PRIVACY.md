@@ -10,9 +10,12 @@ involved.
 
 ShowdUp stores your timezone, commitments, weekly and per-day schedules, reminder activity,
 attempt history, subscription feature state, and verification evidence in the
-app's private storage. Step evidence can include new step counts and elapsed
-time. Location evidence can include the destination you chose, coordinates,
-accuracy, timestamps, and dwell duration.
+app's private storage. Legacy step evidence can include new step counts and
+elapsed time. Walk evidence can include active duration, distance, coordinates,
+accuracy and timestamps. Gym evidence can include the destination you chose,
+coordinates, accuracy, timestamps and dwell duration. Place-search text and
+the selected result are processed by Google Places when you open gym or
+destination search.
 
 ShowdUp does not upload commitment titles, step readings, coordinates or
 verification evidence for social features. If you use Battles, Firebase stores

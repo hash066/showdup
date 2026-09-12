@@ -8,8 +8,15 @@ import android.hardware.*
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
+import android.provider.AlarmClock
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
+import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.model.Place
+import com.google.android.libraries.places.api.net.FetchPlaceRequest
+import com.google.android.libraries.places.widget.PlaceAutocomplete
+import com.google.android.libraries.places.widget.PlaceAutocompleteActivity
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.*
@@ -22,6 +29,28 @@ object Events {
 }
 class MainActivity:FlutterFragmentActivity(){
  private var permissionResult:MethodChannel.Result?=null
+ private var placeResult:MethodChannel.Result?=null
+ private val placeAutocompleteLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){activityResult->
+  val pending=placeResult?:return@registerForActivityResult
+  val returned=activityResult.data
+  if(activityResult.resultCode!=PlaceAutocompleteActivity.RESULT_OK||returned==null){
+   placeResult=null
+   if(activityResult.resultCode==PlaceAutocompleteActivity.RESULT_ERROR&&returned!=null)pending.error("place_search_failed",PlaceAutocomplete.getResultStatusFromIntent(returned)?.statusMessage?:"Place search failed.",null)else pending.success(null)
+   return@registerForActivityResult
+  }
+  val data=returned!!
+  val prediction=PlaceAutocomplete.getPredictionFromIntent(data)
+  if(prediction==null){placeResult=null;pending.error("place_search_failed","No place was selected.",null);return@registerForActivityResult}
+  val token=PlaceAutocomplete.getSessionTokenFromIntent(data)
+  val fields=listOf(Place.Field.ID,Place.Field.FORMATTED_ADDRESS,Place.Field.LOCATION)
+  val request=FetchPlaceRequest.builder(prediction.placeId,fields).setSessionToken(token).build()
+  Places.createClient(this).fetchPlace(request).addOnSuccessListener{response->
+   val place=response.place;val point=place.location
+   placeResult=null
+   if(point==null)pending.error("place_has_no_location","That result has no map location. Choose another gym.",null)
+   else pending.success(mapOf("id" to (place.id?:prediction.placeId),"name" to prediction.getPrimaryText(null).toString(),"address" to (place.formattedAddress?:prediction.getFullText(null).toString()),"lat" to point.latitude,"lng" to point.longitude))
+  }.addOnFailureListener{error->placeResult=null;pending.error("place_details_failed",error.message?:"Could not load that place.",null)}
+ }
  override fun onNewIntent(newIntent: Intent) {
   super.onNewIntent(newIntent)
   setIntent(newIntent)
@@ -59,6 +88,18 @@ class MainActivity:FlutterFragmentActivity(){
    "getLaunchInvite"->{val code=intent.data?.takeIf{it.host=="showdup-f0799.web.app"&&it.pathSegments.firstOrNull()=="i"}?.lastPathSegment;intent.data=null;result.success(code)}
    else->result.notImplemented()
   }}catch(e:Exception){result.error("social_error",e.message,null)}}
+  MethodChannel(engine.dartExecutor.binaryMessenger,"app.showdup/places").setMethodCallHandler{call,result->try{when(call.method){
+   "pickPlace"->{
+    if(placeResult!=null){result.error("busy","Place search is already open.",null);return@setMethodCallHandler}
+    val key=BuildConfig.PLACES_API_KEY
+    if(key.isBlank()||key=="DEFAULT_API_KEY"){result.error("maps_not_configured","Gym search needs an Android-restricted Places API key in android/secrets.properties.",null);return@setMethodCallHandler}
+    if(!Places.isInitialized())Places.initializeWithNewPlacesApiEnabled(applicationContext,key)
+    placeResult=result
+    val initial=(call.arguments as? Map<*,*>)?.get("initialQuery")?.toString().orEmpty()
+    placeAutocompleteLauncher.launch(PlaceAutocomplete.createIntent(this){if(initial.isNotBlank())setInitialQuery(initial)})
+   }
+   else->result.notImplemented()
+  }}catch(e:Exception){placeResult=null;result.error("places_error",e.message,null)}}
   AlarmEngine.channels(this)
   if(intent.getBooleanExtra("restoreOverlay",false)){intent.removeExtra("restoreOverlay");OverlayService.enable(this)}
  }
@@ -111,6 +152,18 @@ class MainActivity:FlutterFragmentActivity(){
    "scheduleReminders"->{r.success(AlarmEngine.schedule(this,JSONObject(args)))}
    "cancelReminders"->{AlarmEngine.cancel(this,args["attemptId"].toString());r.success(true)}
    "configureCommitments"->{AlarmEngine.configure(this,args["commitments"] as? List<*>?:emptyList<Any>());r.success(true)}
+   "createNativeAlarm"->{
+    val days=(args["days"] as? List<*>)?.mapNotNull{(it as? Number)?.toInt()}?:emptyList()
+    val intent=Intent(AlarmClock.ACTION_SET_ALARM).apply{
+     putExtra(AlarmClock.EXTRA_HOUR,(args["hour"] as Number).toInt())
+     putExtra(AlarmClock.EXTRA_MINUTES,(args["minute"] as Number).toInt())
+     putExtra(AlarmClock.EXTRA_MESSAGE,args["label"]?.toString()?:"ShowdUp alarm")
+     putExtra(AlarmClock.EXTRA_SKIP_UI,false)
+     if(days.isNotEmpty())putExtra(AlarmClock.EXTRA_DAYS,ArrayList(days.map{when(it){1->java.util.Calendar.MONDAY;2->java.util.Calendar.TUESDAY;3->java.util.Calendar.WEDNESDAY;4->java.util.Calendar.THURSDAY;5->java.util.Calendar.FRIDAY;6->java.util.Calendar.SATURDAY;else->java.util.Calendar.SUNDAY}}))
+    }
+    if(intent.resolveActivity(packageManager)==null)r.error("clock_missing","No alarm clock app can handle this request.",null)else{startActivity(intent);r.success(true)}
+   }
+   "showNativeAlarms"->{val i=Intent(AlarmClock.ACTION_SHOW_ALARMS);if(i.resolveActivity(packageManager)==null)r.error("clock_missing","No alarm clock app is available.",null)else{startActivity(i);r.success(true)}}
    "silence"->{AlarmEngine.silence(this,args["attemptId"].toString(),true,"manual");r.success(true)}
    "getLaunchAttempt"->{val launchAttempt=intent.getStringExtra("attemptId")?:intent.data?.getQueryParameter("attemptId");intent.removeExtra("attemptId");intent.data=null;r.success(launchAttempt)}
    "getPermissionStatus"->{val am=getSystemService(AlarmManager::class.java);r.success(mapOf("exactAlarm" to (Build.VERSION.SDK_INT<31||am.canScheduleExactAlarms()),"notifications" to (Build.VERSION.SDK_INT<33||granted(Manifest.permission.POST_NOTIFICATIONS)),"batteryOptimised" to !getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName),"fullScreenIntent" to (Build.VERSION.SDK_INT<34||getSystemService(NotificationManager::class.java).canUseFullScreenIntent()),"activityRecognition" to (Build.VERSION.SDK_INT<29||granted(Manifest.permission.ACTIVITY_RECOGNITION)),"location" to granted(Manifest.permission.ACCESS_FINE_LOCATION),"manufacturer" to Build.MANUFACTURER))}
@@ -136,6 +189,7 @@ class MainActivity:FlutterFragmentActivity(){
  }}
  private fun location(c:MethodCall,r:MethodChannel.Result){when(c.method){
   "startWatch"->{r.success(TrackingService.start(this,"location",JSONObject(c.arguments as Map<*,*>)))}
+  "startWalk"->{r.success(TrackingService.start(this,"walk",JSONObject(c.arguments as Map<*,*>)))}
   "stopWatch"->{TrackingService.stop(this,c.argument<String>("attemptId")!!);r.success(true)}
   "isWatching"->r.success(TrackingService.hasLocation)
   "currentLocation"->{if(!granted(Manifest.permission.ACCESS_FINE_LOCATION)){r.error("permission_denied","Allow precise location first",null);return};LocationServices.getFusedLocationProviderClient(this).getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,null).addOnSuccessListener{l->if(l==null)r.error("unavailable","No location fix. Try outdoors.",null)else r.success(mapOf("lat" to l.latitude,"lng" to l.longitude))}.addOnFailureListener{r.error("unavailable",it.message,null)}}

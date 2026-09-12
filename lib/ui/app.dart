@@ -175,7 +175,7 @@ class WelcomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 const Text(
-                  'Keep the promise\nyou made to\nyourself.',
+                  'An alarm with\na finish line.',
                   style: TextStyle(
                     fontSize: 46,
                     fontWeight: FontWeight.w800,
@@ -185,7 +185,7 @@ class WelcomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 const Text(
-                  'Set your commitment. Choose what counts as done. Your phone follows through.',
+                  'Use a regular Clock alarm, or choose a verified Walk or Gym commitment that keeps reminding you until the phone sees proof.',
                   style: TextStyle(color: T.muted, fontSize: 16, height: 1.6),
                 ),
                 const SizedBox(height: 26),
@@ -218,7 +218,7 @@ class WelcomeScreen extends StatelessWidget {
                 FilledButton(
                   onPressed: onAuthenticated,
                   child: const Text(
-                    'Make my first commitment  →',
+                    'Choose my alarm  →',
                     style: TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -462,9 +462,9 @@ class _HomeShellState extends ConsumerState<HomeShell>
         onDestinationSelected: (v) => setState(() => tab = v),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.wb_sunny_outlined),
-            selectedIcon: Icon(Icons.wb_sunny_rounded),
-            label: 'Today',
+            icon: Icon(Icons.alarm_outlined),
+            selectedIcon: Icon(Icons.alarm_rounded),
+            label: 'Alarms',
           ),
           NavigationDestination(
             icon: Icon(Icons.flag_outlined),

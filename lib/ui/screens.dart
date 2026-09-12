@@ -68,6 +68,114 @@ class PageHeading extends StatelessWidget {
   );
 }
 
+class AlarmModePanel extends StatelessWidget {
+  const AlarmModePanel({super.key});
+
+  Future<void> _regularAlarm(BuildContext context) async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 7, minute: 0),
+      helpText: 'Regular alarm',
+    );
+    if (time == null || !context.mounted) return;
+    try {
+      await AlarmChannel.createNativeAlarm(
+        hour: time.hour,
+        minute: time.minute,
+        label: 'ShowdUp regular alarm',
+      );
+    } catch (error) {
+      if (context.mounted) showMessage(context, friendlyError(error));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Eyebrow('Choose an alarm'),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          Expanded(
+            child: _AlarmMode(
+              icon: Icons.alarm,
+              title: 'Regular',
+              subtitle: 'Open your Clock app',
+              onTap: () => _regularAlarm(context),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _AlarmMode(
+              icon: Icons.verified_outlined,
+              title: 'Commitment',
+              subtitle: 'Stops after proof',
+              highlighted: true,
+              onTap: () => openWizard(context),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () async {
+            try {
+              await AlarmChannel.showNativeAlarms();
+            } catch (error) {
+              if (context.mounted) showMessage(context, friendlyError(error));
+            }
+          },
+          icon: const Icon(Icons.open_in_new, size: 16),
+          label: const Text('View alarms in Clock'),
+        ),
+      ),
+    ],
+  );
+}
+
+class _AlarmMode extends StatelessWidget {
+  const _AlarmMode({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.highlighted = false,
+  });
+  final IconData icon;
+  final String title, subtitle;
+  final VoidCallback onTap;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(T.radius),
+    child: Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: highlighted ? T.accent.withValues(alpha: .12) : T.surface,
+        borderRadius: BorderRadius.circular(T.radius),
+        border: Border.all(
+          color: highlighted ? T.accent : Colors.white.withValues(alpha: .05),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: highlighted ? T.accent : T.text),
+          const SizedBox(height: 18),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text(subtitle, style: const TextStyle(color: T.muted, fontSize: 11)),
+        ],
+      ),
+    ),
+  );
+}
+
 class TodayScreen extends ConsumerWidget {
   const TodayScreen({super.key});
   @override
@@ -108,7 +216,7 @@ class TodayScreen extends ConsumerWidget {
         padding: const EdgeInsets.all(24),
         children: [
           PageHeading(
-            'A little better, today.',
+            'Wake up with a reason.',
             DateFormat('EEEE, MMMM d').format(now),
             trailing: Container(
               padding: const EdgeInsets.all(10),
@@ -119,6 +227,44 @@ class TodayScreen extends ConsumerWidget {
               child: const Icon(Icons.wb_sunny_outlined, color: T.accent),
             ),
           ),
+          const AlarmModePanel(),
+          const SizedBox(height: 14),
+          if (app.user?.isPro != true) ...[
+            InkWell(
+              borderRadius: BorderRadius.circular(T.radius),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(builder: (_) => const ProScreen()),
+              ),
+              child: const Panel(
+                padding: 16,
+                child: Row(
+                  children: [
+                    Icon(Icons.lock_open_rounded, color: T.accent),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ShowdUp Pro',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          SizedBox(height: 3),
+                          Text(
+                            'Block distractions and run more commitments',
+                            style: TextStyle(color: T.muted, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: T.muted),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
           if (app.error != null) ErrorNotice(app.error!, onRetry: app.refresh),
           if (app.loading)
             const Center(child: CircularProgressIndicator())
@@ -159,9 +305,11 @@ class TodayScreen extends ConsumerWidget {
                           : c.verifierConfig is StepsConfig
                           ? '${((app.progress[a.id] ?? (app.preview ? 0.64 : 0)) * (c.verifierConfig as StepsConfig).targetSteps).round()}'
                           : null,
-                      label: c.verifierType == VerifierType.steps
-                          ? 'STEPS RECORDED'
-                          : 'ARRIVAL + DWELL',
+                      label: switch (c.verifierType) {
+                        VerifierType.steps => 'STEPS RECORDED',
+                        VerifierType.location => 'GYM ARRIVAL',
+                        VerifierType.walk => 'WALK PROGRESS',
+                      },
                       color: a.state == AttemptState.completed
                           ? T.ok
                           : T.accent,
@@ -352,6 +500,15 @@ String goalDescription(Commitment c) {
   final cfg = c.verifierConfig;
   return cfg is StepsConfig
       ? '${NumberFormat.decimalPattern().format(cfg.targetSteps)} new steps inside your window'
+      : cfg is WalkConfig
+      ? switch (cfg.mode) {
+          WalkGoalMode.duration =>
+            '${cfg.targetDurationMs ~/ 60000} active walking minutes',
+          WalkGoalMode.distance =>
+            '${(cfg.targetDistanceM / 1000).toStringAsFixed(2)} km by GPS',
+          WalkGoalMode.destination =>
+            'Walk to ${cfg.label?.isNotEmpty == true ? cfg.label : 'your destination'}',
+        }
       : cfg is LocationConfig
       ? 'Stay near ${cfg.label?.isNotEmpty == true ? cfg.label : 'your destination'} for ${cfg.dwellMs ~/ 60000} minutes'
       : '';
@@ -389,7 +546,7 @@ class CommitmentsScreen extends ConsumerWidget {
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Icon(
-                        c.verifierType == VerifierType.steps
+                        c.kind == CommitmentKind.walk
                             ? Icons.directions_walk
                             : Icons.place_outlined,
                         color: T.accent,
@@ -911,9 +1068,9 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                     const Eyebrow('What counts as done'),
                     const SizedBox(height: 12),
                     Text(
-                      c.verifierType == VerifierType.steps
-                          ? 'Steps prove recorded movement, not a walk. Keep your phone with you. Only new steps recorded within this window count.'
-                          : 'Location proves presence near your destination, not a workout. Open this screen and start verification. If you never open the app or tap a reminder, nothing verifies.',
+                      c.kind == CommitmentKind.walk
+                          ? 'Foreground GPS counts plausible movement with a precise, non-mock fix. Keep your phone with you and open this screen to start verification.'
+                          : 'Location proves presence near your gym, not a workout. Open this screen and start verification. If you never open the app or tap a reminder, nothing verifies.',
                       style: const TextStyle(
                         color: T.muted,
                         fontSize: 13,
@@ -1556,12 +1713,12 @@ class PrivacyScreen extends StatelessWidget {
             'Commitments, attempt history, reminders and verification evidence stay on this device. If you use Battles, Firebase receives your chosen display identity, mascot, battle membership and aggregated outcome, snooze, score and pet-state events. Commitment titles, step readings, coordinates and verification evidence are not uploaded for Battles. RevenueCat receives an anonymous app-user identifier and subscription status.',
           ),
           (
-            'Steps',
-            'The hardware step counter records movement. ShowdUp stores the number of new steps, elapsed duration and baseline time on this device. This proves recorded movement, not a workout, and is not tamper-proof.',
+            'Walks',
+            'Walk verification starts when you open the app. Foreground GPS measures plausible movement for active time, distance or destination arrival. ShowdUp rejects mock, stale and low-accuracy fixes, but this still proves phone movement rather than exercise intensity.',
           ),
           (
             'Location',
-            'Location verification starts when you open the app. A foreground service checks arrival and continuous dwell and stores completion evidence, including coordinates and accuracy, on this device. ShowdUp does not request background location permission.',
+            'Gym verification uses a foreground service to check five continuous minutes inside a fixed 150 m boundary. Place-search text and the selected place are processed by Google Places; the resulting place and completion coordinates stay in local commitment storage. ShowdUp does not request background location permission.',
           ),
           (
             'Selected-app restrictions',

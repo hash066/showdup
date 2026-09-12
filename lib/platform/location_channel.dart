@@ -76,6 +76,26 @@ class LocationChannel {
       }) ??
       false;
 
+  static Future<bool> startWalk({
+    required String attemptId,
+    required String mode,
+    required int targetDurationMs,
+    required int targetDistanceM,
+    required int untilEpochMs,
+    double? lat,
+    double? lng,
+  }) async =>
+      await _m.invokeMethod<bool>('startWalk', {
+        'attemptId': attemptId,
+        'mode': mode,
+        'targetDurationMs': targetDurationMs,
+        'targetDistanceM': targetDistanceM,
+        'untilEpochMs': untilEpochMs,
+        'lat': ?lat,
+        'lng': ?lng,
+      }) ??
+      false;
+
   static Future<bool> stopWatch(String attemptId) async =>
       await _m.invokeMethod<bool>('stopWatch', {'attemptId': attemptId}) ??
       false;

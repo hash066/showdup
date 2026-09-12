@@ -5,6 +5,7 @@ config.json
 config.release.json
 config.sandbox.json
 android/key.properties
+android/secrets.properties
 *.jks
 *.keystore
 functions/node_modules/

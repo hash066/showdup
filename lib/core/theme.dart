@@ -3,14 +3,16 @@ import 'package:flutter/material.dart';
 /// FROZEN CONTRACT: design tokens.
 class T {
   T._();
-  static const bg = Color(0xFF0D1426);
-  static const surface = Color(0xFF16203A);
-  static const text = Color(0xFFF5F0E6);
-  static const muted = Color(0xFFAAB4C8);
-  static const accent = Color(0xFFFF8A4C);
+  // Core palette: ink navy, warm ivory, sunrise orange. Status colors are
+  // functional feedback rather than additional brand colors.
+  static const bg = Color(0xFF0B1220);
+  static const surface = Color(0xFF151F2E);
+  static const text = Color(0xFFF7F3EA);
+  static const muted = Color(0xFF9AA8B9);
+  static const accent = Color(0xFFFFB45A);
   static const danger = Color(0xFFFF5C5C);
   static const ok = Color(0xFF4CD9A0);
-  static const radius = 20.0;
+  static const radius = 16.0;
 }
 
 ThemeData buildTheme() {
@@ -62,6 +64,7 @@ ThemeData buildTheme() {
     ),
     cardTheme: CardThemeData(
       color: T.surface,
+      elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(T.radius),
       ),

@@ -3,12 +3,46 @@ library;
 
 enum VerifierType {
   steps('steps'),
-  location('location');
+  location('location'),
+  walk('walk');
 
   const VerifierType(this.wire);
   final String wire;
   static VerifierType from(String s) =>
       VerifierType.values.firstWhere((e) => e.wire == s);
+}
+
+enum WalkGoalMode {
+  duration('duration'),
+  distance('distance'),
+  destination('destination');
+
+  const WalkGoalMode(this.wire);
+  final String wire;
+  static WalkGoalMode from(String? value) => WalkGoalMode.values.firstWhere(
+    (mode) => mode.wire == value,
+    orElse: () => WalkGoalMode.duration,
+  );
+}
+
+/// Product-level presets. Users choose one of these instead of composing an
+/// arbitrary title and verifier. The wire value is stored locally so future
+/// presets can evolve without guessing from the verifier type.
+enum CommitmentKind {
+  walk('walk'),
+  gym('gym');
+
+  const CommitmentKind(this.wire);
+  final String wire;
+
+  static CommitmentKind from(String? value, VerifierType verifier) {
+    for (final kind in CommitmentKind.values) {
+      if (kind.wire == value) return kind;
+    }
+    return verifier == VerifierType.location
+        ? CommitmentKind.gym
+        : CommitmentKind.walk;
+  }
 }
 
 enum AttemptState {

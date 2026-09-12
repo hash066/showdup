@@ -93,4 +93,23 @@ class AlarmChannel {
 
   static Stream<AlarmEvent> events() =>
       _e.receiveBroadcastStream().map((e) => AlarmEvent.fromMap(e as Map));
+
+  /// Hands a regular alarm to the user's chosen Clock app. Android exposes no
+  /// reliable cross-vendor API for reading its later state back into ShowdUp.
+  static Future<bool> createNativeAlarm({
+    required int hour,
+    required int minute,
+    required String label,
+    List<int> days = const [],
+  }) async =>
+      await _m.invokeMethod<bool>('createNativeAlarm', {
+        'hour': hour,
+        'minute': minute,
+        'label': label,
+        'days': days,
+      }) ??
+      false;
+
+  static Future<bool> showNativeAlarms() async =>
+      await _m.invokeMethod<bool>('showNativeAlarms') ?? false;
 }

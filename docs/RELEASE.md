@@ -80,8 +80,9 @@ Before production rollout:
    If this key is already registered with Play App Signing, use Play Console's
    upload-key reset flow.
 2. Publish a privacy policy URL and complete Data safety for RevenueCat,
-   location evidence, physical-activity data, installed-app selection, and the
-   fact that commitment data otherwise stays on-device.
+   foreground GPS walk/gym evidence, Google Places search, legacy
+   physical-activity data, installed-app selection, and the fact that
+   commitment data otherwise stays on-device.
 3. Complete the AccessibilityService declaration and provide Play's required
    demonstration video. The disclosure shown before Android Settings must stay
    in the app.
@@ -89,7 +90,8 @@ Before production rollout:
    declarations requested by Play for the target SDK.
 5. Test from the Play internal-testing install on physical Android 13, 14, and
    15 devices: reboot, force-stop, Doze, denied permissions, OEM battery saver,
-   step completion, location dwell, overlapping commitments, blocker escape,
+   GPS walking time/distance/destination, gym dwell, overlapping commitments,
+   blocker escape,
    per-weekday Pro windows, buddy sharing, purchase, restore, expiry, and
    offline launch.
 6. Confirm the public developer contact email, support URL, store listing,

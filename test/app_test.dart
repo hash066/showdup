@@ -31,7 +31,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('LOCAL PREVIEW'), findsOneWidget);
       expect(find.text('Morning walk'), findsOneWidget);
-      for (final tab in ['Commitments', 'History', 'Settings', 'Today']) {
+      for (final tab in ['Commitments', 'History', 'Settings', 'Alarms']) {
         await tester.tap(find.text(tab).last);
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull, reason: tab);

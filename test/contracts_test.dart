@@ -100,6 +100,45 @@ void main() {
       isNotNull,
     );
   });
+  test('commitment presets migrate safely and place metadata round-trips', () {
+    expect(CommitmentKind.from(null, VerifierType.steps), CommitmentKind.walk);
+    expect(
+      CommitmentKind.from(null, VerifierType.location),
+      CommitmentKind.gym,
+    );
+    const gym = LocationConfig(
+      lat: 12.9716,
+      lng: 77.5946,
+      radiusM: 150,
+      dwellMs: 300000,
+      label: 'My gym',
+      placeId: 'place-1',
+      address: 'Bengaluru',
+    );
+    final restored = LocationConfig.fromJson(gym.toJson());
+    expect(restored.radiusM, 150);
+    expect(restored.dwellMs, 300000);
+    expect(restored.placeId, 'place-1');
+    expect(restored.address, 'Bengaluru');
+    expect(
+      const WalkConfig(
+        mode: WalkGoalMode.duration,
+        targetDurationMs: 4 * 60000,
+      ).validate(),
+      isNotNull,
+    );
+    expect(
+      const WalkConfig(
+        mode: WalkGoalMode.distance,
+        targetDistanceM: 1000,
+      ).validate(),
+      isNull,
+    );
+    expect(
+      const WalkConfig(mode: WalkGoalMode.destination).validate(),
+      isNotNull,
+    );
+  });
   test(
     'verifier registry accepts independent implementation unchanged',
     () async {

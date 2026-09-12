@@ -185,6 +185,7 @@ class Commitment {
     required this.reminder,
     required this.restrictions,
     required this.status,
+    this.kind = CommitmentKind.walk,
   });
 
   final String id;
@@ -196,6 +197,7 @@ class Commitment {
   final ReminderConfig reminder;
   final Restrictions restrictions;
   final CommitmentStatus status;
+  final CommitmentKind kind;
 
   String? validate() =>
       verifierConfig.validate() ??
@@ -212,26 +214,31 @@ class Commitment {
     'reminder': reminder.toJson(),
     'restrictions': restrictions.toJson(),
     'status': status.wire,
+    'kind': kind.wire,
   };
 
-  factory Commitment.fromJson(String id, Map<String, dynamic> j) => Commitment(
-    id: id,
-    ownerUid: j['ownerUid'] as String,
-    title: j['title'] as String,
-    verifierType: VerifierType.from(j['verifierType'] as String),
-    verifierConfig: VerifierConfig.fromJson(
-      j['verifierType'] as String,
-      Map<String, dynamic>.from(j['verifierConfig'] as Map),
-    ),
-    schedule: CommitmentSchedule.fromJson(
-      Map<String, dynamic>.from(j['schedule'] as Map),
-    ),
-    reminder: ReminderConfig.fromJson(
-      Map<String, dynamic>.from(j['reminder'] as Map),
-    ),
-    restrictions: Restrictions.fromJson(
-      Map<String, dynamic>.from(j['restrictions'] as Map? ?? {}),
-    ),
-    status: CommitmentStatus.from(j['status'] as String),
-  );
+  factory Commitment.fromJson(String id, Map<String, dynamic> j) {
+    final verifier = VerifierType.from(j['verifierType'] as String);
+    return Commitment(
+      id: id,
+      ownerUid: j['ownerUid'] as String,
+      title: j['title'] as String,
+      verifierType: verifier,
+      verifierConfig: VerifierConfig.fromJson(
+        j['verifierType'] as String,
+        Map<String, dynamic>.from(j['verifierConfig'] as Map),
+      ),
+      schedule: CommitmentSchedule.fromJson(
+        Map<String, dynamic>.from(j['schedule'] as Map),
+      ),
+      reminder: ReminderConfig.fromJson(
+        Map<String, dynamic>.from(j['reminder'] as Map),
+      ),
+      restrictions: Restrictions.fromJson(
+        Map<String, dynamic>.from(j['restrictions'] as Map? ?? {}),
+      ),
+      status: CommitmentStatus.from(j['status'] as String),
+      kind: CommitmentKind.from(j['kind'] as String?, verifier),
+    );
+  }
 }

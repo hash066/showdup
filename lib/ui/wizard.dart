@@ -7,6 +7,7 @@ import '../models/verifier_config.dart';
 import '../models/enums.dart';
 import '../platform/alarm_channel.dart';
 import '../platform/overlay_channel.dart';
+import '../platform/places_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../platform/blocker_channel.dart';
 import '../services/controller.dart';
@@ -28,12 +29,13 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       lng = TextEditingController(),
       label = TextEditingController(),
       zone = TextEditingController();
+  String? placeId, placeAddress;
   int page = 0,
-      target = 1000,
+      walkMinutes = 15,
+      walkDistanceM = 1000,
       interval = 20,
-      maxReminders = 6,
-      dwell = 5,
-      radius = 150;
+      maxReminders = 6;
+  WalkGoalMode walkMode = WalkGoalMode.duration;
   bool loud = false,
       busy = false,
       restrictionsEnabled = false,
@@ -42,7 +44,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   List<BlockableApp> blockableApps = const [];
   final Set<String> selectedPackages = {};
   bool loadingApps = false;
-  VerifierType type = VerifierType.steps;
+  VerifierType type = VerifierType.walk;
   Set<int> days = {1, 2, 3, 4, 5};
   final Map<int, TimeOfDay> dayStarts = {};
   final Map<int, TimeOfDay> dayEnds = {};
@@ -53,8 +55,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     super.initState();
     final c = widget.existing;
     if (c != null) {
-      title.text = c.title;
-      type = c.verifierType;
+      type = c.verifierType == VerifierType.steps
+          ? VerifierType.walk
+          : c.verifierType;
       days = c.schedule.daysOfWeek.toSet();
       start = _time(c.schedule.windowStartLocal);
       end = _time(c.schedule.windowEndLocal);
@@ -70,14 +73,24 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       restrictionsEnabled = c.restrictions.enabled;
       selectedPackages.addAll(c.restrictions.packages);
       final cfg = c.verifierConfig;
-      if (cfg is StepsConfig) target = cfg.targetSteps;
+      if (cfg is WalkConfig) {
+        walkMode = cfg.mode;
+        walkMinutes = cfg.targetDurationMs ~/ 60000;
+        walkDistanceM = cfg.targetDistanceM;
+        if (cfg.lat != null) lat.text = cfg.lat.toString();
+        if (cfg.lng != null) lng.text = cfg.lng.toString();
+        label.text = cfg.label ?? '';
+        placeId = cfg.placeId;
+        placeAddress = cfg.address;
+      }
       if (cfg is LocationConfig) {
         lat.text = cfg.lat.toString();
         lng.text = cfg.lng.toString();
         label.text = cfg.label ?? '';
-        dwell = cfg.dwellMs ~/ 60000;
-        radius = cfg.radiusM;
+        placeId = cfg.placeId;
+        placeAddress = cfg.address;
       }
+      title.text = _presetTitle;
     } else {
       title.text = 'Morning walk';
       zone.text = ref.read(appProvider).user?.timezone ?? 'Asia/Kolkata';
@@ -98,15 +111,48 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   );
   String _clock(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-  VerifierConfig get config => type == VerifierType.steps
-      ? StepsConfig(targetSteps: target)
-      : LocationConfig(
-          lat: double.tryParse(lat.text) ?? double.nan,
-          lng: double.tryParse(lng.text) ?? double.nan,
-          radiusM: radius,
-          dwellMs: dwell * 60000,
-          label: label.text.trim(),
-        );
+  String get _presetTitle => switch (type) {
+    VerifierType.location => 'Gym session',
+    VerifierType.walk when walkMode == WalkGoalMode.duration =>
+      'Walk for $walkMinutes minutes',
+    VerifierType.walk when walkMode == WalkGoalMode.distance =>
+      'Walk ${(walkDistanceM / 1000).toStringAsFixed(walkDistanceM % 1000 == 0 ? 0 : 2)} km',
+    VerifierType.walk =>
+      'Walk to ${label.text.isEmpty ? 'my destination' : label.text}',
+    VerifierType.steps => 'Morning walk',
+  };
+  String get _goalSummary => switch (config) {
+    WalkConfig(mode: WalkGoalMode.duration) => '$walkMinutes active minutes',
+    WalkConfig(mode: WalkGoalMode.distance) =>
+      '${(walkDistanceM / 1000).toStringAsFixed(2)} km by GPS',
+    WalkConfig(mode: WalkGoalMode.destination) =>
+      'Arrive within 150 m of ${label.text.isEmpty ? 'your destination' : label.text}',
+    StepsConfig(:final targetSteps) => '$targetSteps new steps',
+    LocationConfig() =>
+      'Stay near ${label.text.isEmpty ? 'your gym' : label.text} for 5 minutes',
+  };
+  VerifierConfig get config => switch (type) {
+    VerifierType.walk => WalkConfig(
+      mode: walkMode,
+      targetDurationMs: walkMinutes * 60000,
+      targetDistanceM: walkDistanceM,
+      lat: double.tryParse(lat.text),
+      lng: double.tryParse(lng.text),
+      label: label.text.trim().isEmpty ? null : label.text.trim(),
+      placeId: placeId,
+      address: placeAddress,
+    ),
+    VerifierType.location => LocationConfig(
+      lat: double.tryParse(lat.text) ?? double.nan,
+      lng: double.tryParse(lng.text) ?? double.nan,
+      radiusM: 150,
+      dwellMs: 5 * 60000,
+      label: label.text.trim(),
+      placeId: placeId,
+      address: placeAddress,
+    ),
+    VerifierType.steps => const StepsConfig(targetSteps: 1000),
+  };
   CommitmentSchedule get schedule {
     final isPro = ref.read(appProvider).user?.isPro == true;
     final selected = days.toList()..sort();
@@ -133,12 +179,6 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   Future<void> next() async {
     setState(() => error = null);
     if (page == 0) {
-      if (title.text.trim().isEmpty || title.text.trim().length > 80) {
-        setState(
-          () => error = 'Give your commitment a name, up to 80 characters.',
-        );
-        return;
-      }
       if (config.validate() != null) {
         setState(() => error = config.validate());
         return;
@@ -204,7 +244,8 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         }
       }
       final data = {
-        'title': title.text.trim(),
+        'title': _presetTitle,
+        'kind': type == VerifierType.location ? 'gym' : 'walk',
         'verifierType': type.wire,
         'verifierConfig': config.toJson(),
         'schedule': schedule.toJson(),
@@ -290,11 +331,39 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       if (p != null) {
         lat.text = (p['lat'] as num).toStringAsFixed(6);
         lng.text = (p['lng'] as num).toStringAsFixed(6);
+        label.text = 'My gym';
+        placeId = null;
+        placeAddress = 'Pinned from your current location';
       }
     } catch (e) {
       setState(() => error = friendlyError(e));
     } finally {
       setState(() => busy = false);
+    }
+  }
+
+  Future<void> pickGym() async {
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final place = await PlacesChannel.pickPlace(
+        initialQuery: type == VerifierType.location ? 'gym' : '',
+      );
+      if (place == null || !mounted) return;
+      setState(() {
+        placeId = place.id;
+        placeAddress = place.address;
+        label.text = place.name;
+        lat.text = place.lat.toStringAsFixed(6);
+        lng.text = place.lng.toStringAsFixed(6);
+        title.text = _presetTitle;
+      });
+    } catch (e) {
+      if (mounted) setState(() => error = friendlyError(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -418,136 +487,209 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     ),
   );
   List<Widget> _goal() => [
-    TextField(
-      controller: title,
-      maxLength: 80,
-      textCapitalization: TextCapitalization.sentences,
-      decoration: const InputDecoration(
-        labelText: 'What are you showing up for?',
-        hintText: 'Morning walk',
-      ),
+    const Text(
+      'Every option below is completed by evidence from your phone. There is no manual “done” button.',
+      style: TextStyle(color: T.muted, height: 1.55),
     ),
-    const SizedBox(height: 18),
-    const Eyebrow('What counts as done?'),
+    const SizedBox(height: 20),
+    const Eyebrow('Choose a verified preset'),
     const SizedBox(height: 14),
     Row(
       children: [
         Expanded(
-          child: _typeCard(
-            VerifierType.steps,
-            Icons.directions_walk,
-            'Record steps',
-          ),
+          child: _typeCard(VerifierType.walk, Icons.directions_walk, 'Walk'),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: _typeCard(
-            VerifierType.location,
-            Icons.place_outlined,
-            'Arrive & stay',
-          ),
+          child: _typeCard(VerifierType.location, Icons.fitness_center, 'Gym'),
         ),
       ],
     ),
+    const SizedBox(height: 12),
+    Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: T.surface.withValues(alpha: .65),
+        borderRadius: BorderRadius.circular(T.radius),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.code_rounded, color: T.muted),
+          SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('LeetCode', style: TextStyle(fontWeight: FontWeight.w700)),
+                SizedBox(height: 3),
+                Text(
+                  'Waiting for a stable authorized account integration',
+                  style: TextStyle(color: T.muted, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          Text('SOON', style: TextStyle(color: T.muted, fontSize: 10)),
+        ],
+      ),
+    ),
     const SizedBox(height: 24),
-    if (type == VerifierType.steps) ...[
+    if (type == VerifierType.walk) ...[
+      Wrap(
+        spacing: 8,
+        children: WalkGoalMode.values
+            .map(
+              (mode) => ChoiceChip(
+                label: Text(switch (mode) {
+                  WalkGoalMode.duration => 'Time',
+                  WalkGoalMode.distance => 'Kilometres',
+                  WalkGoalMode.destination => 'Destination',
+                }),
+                selected: walkMode == mode,
+                onSelected: (_) => setState(() {
+                  walkMode = mode;
+                  title.text = _presetTitle;
+                }),
+              ),
+            )
+            .toList(),
+      ),
+      const SizedBox(height: 14),
+      Panel(
+        child: switch (walkMode) {
+          WalkGoalMode.duration => Column(
+            children: [
+              const Eyebrow('Active walking time'),
+              const SizedBox(height: 10),
+              Text(
+                '$walkMinutes min',
+                style: const TextStyle(
+                  fontSize: 38,
+                  fontWeight: FontWeight.w800,
+                  color: T.accent,
+                ),
+              ),
+              Slider(
+                value: walkMinutes.toDouble(),
+                min: 5,
+                max: 120,
+                divisions: 23,
+                onChanged: (value) => setState(() {
+                  walkMinutes = (value / 5).round() * 5;
+                  title.text = _presetTitle;
+                }),
+              ),
+            ],
+          ),
+          WalkGoalMode.distance => Column(
+            children: [
+              const Eyebrow('GPS distance'),
+              const SizedBox(height: 10),
+              Text(
+                '${(walkDistanceM / 1000).toStringAsFixed(2)} km',
+                style: const TextStyle(
+                  fontSize: 38,
+                  fontWeight: FontWeight.w800,
+                  color: T.accent,
+                ),
+              ),
+              Slider(
+                value: walkDistanceM.toDouble(),
+                min: 250,
+                max: 10000,
+                divisions: 39,
+                onChanged: (value) => setState(() {
+                  walkDistanceM = (value / 250).round() * 250;
+                  title.text = _presetTitle;
+                }),
+              ),
+            ],
+          ),
+          WalkGoalMode.destination => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label.text.isEmpty ? 'Choose a destination' : label.text,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              if (placeAddress?.isNotEmpty == true) ...[
+                const SizedBox(height: 6),
+                Text(
+                  placeAddress!,
+                  style: const TextStyle(color: T.muted, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 14),
+              FilledButton.tonalIcon(
+                onPressed: busy ? null : pickGym,
+                icon: const Icon(Icons.search),
+                label: Text(
+                  label.text.isEmpty ? 'Search places' : 'Change destination',
+                ),
+              ),
+            ],
+          ),
+        },
+      ),
+      const SizedBox(height: 16),
+      const Text(
+        'Foreground GPS counts only plausible movement with a precise, non-mock fix. Keep the phone with you and open ShowdUp to start.',
+        style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
+      ),
+    ] else ...[
       Panel(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Eyebrow('New steps after your window opens'),
-            const SizedBox(height: 12),
+            const Icon(Icons.location_searching, color: T.accent, size: 28),
+            const SizedBox(height: 14),
             Text(
-              '$target',
-              style: const TextStyle(
-                fontSize: 44,
-                fontWeight: FontWeight.w800,
-                color: T.accent,
+              label.text.isEmpty ? 'Choose your gym' : label.text,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+            if (placeAddress?.isNotEmpty == true) ...[
+              const SizedBox(height: 6),
+              Text(
+                placeAddress!,
+                style: const TextStyle(
+                  color: T.muted,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            FilledButton.tonalIcon(
+              onPressed: busy ? null : pickGym,
+              icon: const Icon(Icons.search),
+              label: Text(
+                label.text.isEmpty ? 'Search gyms and places' : 'Change gym',
               ),
             ),
-            Slider(
-              value: target.toDouble(),
-              min: 200,
-              max: 20000,
-              divisions: 99,
-              onChanged: (v) => setState(() => target = v.round()),
-            ),
-            const Text(
-              'Start small. You can adjust it later.',
-              style: TextStyle(color: T.muted, fontSize: 12),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: busy ? null : currentLocation,
+              icon: const Icon(Icons.my_location, size: 18),
+              label: const Text('Pin where I am now'),
             ),
           ],
         ),
       ),
-      const SizedBox(height: 16),
-      const Text(
-        'Steps prove recorded movement, not a walk. Keep your phone with you. A hardware step counter is required.',
-        style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
-      ),
-    ] else ...[
-      TextField(
-        controller: label,
-        decoration: const InputDecoration(
-          labelText: 'Place name',
-          hintText: 'My gym',
-        ),
-      ),
       const SizedBox(height: 14),
-      OutlinedButton.icon(
-        onPressed: busy ? null : currentLocation,
-        icon: const Icon(Icons.my_location),
-        label: const Text('Use my current location'),
-      ),
-      const SizedBox(height: 14),
-      Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: lat,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Latitude'),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: TextField(
-              controller: lng,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Longitude'),
-            ),
-          ),
-        ],
-      ),
-      const SizedBox(height: 20),
-      Text('Arrival radius · $radius m'),
-      Slider(
-        value: radius.toDouble(),
-        min: 100,
-        max: 500,
-        divisions: 8,
-        onChanged: (v) => setState(() => radius = v.round()),
-      ),
-      Text('Stay for · $dwell minutes'),
-      Slider(
-        value: dwell.toDouble().clamp(1, 30),
-        min: 1,
-        max: 30,
-        divisions: 29,
-        onChanged: (v) => setState(() => dwell = v.round()),
-      ),
       const Text(
-        '150 m or more is recommended. Location proves presence near a place, not a workout. Open the app to start verification.',
+        'ShowdUp uses a fixed 150 m boundary and verifies after 5 continuous minutes nearby. Coordinates and radius are never shown or editable.',
         style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
       ),
     ],
   ];
   Widget _typeCard(VerifierType value, IconData icon, String label) => InkWell(
-    onTap: () => setState(() => type = value),
+    onTap: () => setState(() {
+      type = value;
+      title.text = _presetTitle;
+    }),
     borderRadius: BorderRadius.circular(20),
     child: Container(
       padding: const EdgeInsets.all(20),
@@ -887,24 +1029,19 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            type == VerifierType.steps
-                ? Icons.directions_walk
-                : Icons.place_outlined,
+            type == VerifierType.location
+                ? Icons.fitness_center
+                : Icons.directions_walk,
             color: T.accent,
             size: 34,
           ),
           const SizedBox(height: 20),
           Text(
-            title.text,
+            _presetTitle,
             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 14),
-          Text(
-            type == VerifierType.steps
-                ? '$target new steps'
-                : 'Stay near ${label.text.isEmpty ? 'your destination' : label.text} for $dwell minutes',
-            style: const TextStyle(color: T.muted),
-          ),
+          Text(_goalSummary, style: const TextStyle(color: T.muted)),
           const Divider(height: 36),
           Text('${_clock(start)} – ${_clock(end)}'),
           const SizedBox(height: 8),

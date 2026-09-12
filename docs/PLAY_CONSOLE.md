@@ -43,9 +43,10 @@ not replace the Play Billing tests above.
 
 Answer from the actual release behavior and the current RevenueCat/Google SDK
 disclosures. The current app stores commitments, schedules, attempt history,
-step evidence, chosen location evidence, reminder activity, and selected-app
-packages locally. It sends purchase identifiers and subscription status needed
-for billing to Google Play and RevenueCat. Optional Battles send Firebase a
+legacy step evidence, GPS walk/gym evidence, reminder activity, and selected-
+app packages locally. Google Places processes place-search text and selected
+results. The app sends purchase identifiers and subscription status needed for
+billing to Google Play and RevenueCat. Optional Battles send Firebase a
 chosen identity, mascot, membership, aggregate outcome, snooze count, score and
 pet state. They do not upload commitment titles, sensor readings, coordinates,
 verification evidence or Accessibility events. The app has no ads.
@@ -70,8 +71,8 @@ the current RevenueCat data-safety guidance immediately before submission.
 - Full-screen intent: declare the high-priority user-created reminder use. The
   feature is permission/state checked and normal notifications remain the
   fallback.
-- Location: foreground precise location only, after the user chooses an
-  arrival-and-stay rule. The app does not request background location.
+- Location: foreground precise location only, after the user chooses a walk or
+  gym rule. The app does not request background location.
 - Physical activity: used only for on-device step verification.
 - Installed apps: launcher packages are shown locally only so a Pro user can
   choose apps for the optional restriction feature.

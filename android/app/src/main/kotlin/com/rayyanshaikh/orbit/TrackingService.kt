@@ -50,7 +50,7 @@ class TrackingService:Service(),SensorEventListener{
    tracks[id]=j
   }
   if(tracks.isEmpty()){stopSelf();return START_NOT_STICKY}
-  hasLocation=tracks.values.any{it.optString("type")=="location"}
+  hasLocation=tracks.values.any{it.optString("type") in setOf("location","walk")}
   val notification=NotificationCompat.Builder(this,"tracking").setSmallIcon(R.drawable.ic_notification).setContentTitle("Showing up, one step at a time").setContentText("Verification is active. Tap to see progress or end today.").setOngoing(true).setContentIntent(AlarmEngine.launch(this,tracks.keys.first())).build()
   try{if(Build.VERSION.SDK_INT>=29){var type=0;if(hasLocation)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;if(tracks.values.any{it.optString("type")=="steps"}&&Build.VERSION.SDK_INT>=34)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;startForeground(910,notification,type)}else startForeground(910,notification)}catch(e:Exception){Log.e("ShowdUpTracking","Unable to enter foreground for verification",e);AlarmEngine.diagnostic(this,"tracking_foreground",e.message?:"Android denied verification foreground service.");for((id,j)in tracks.toMap())fail(id,j,"permission_denied");stopSelf();return START_NOT_STICKY}
   try{
@@ -75,7 +75,8 @@ class TrackingService:Service(),SensorEventListener{
   Events.emit("steps",mapOf("type" to if(ready)"target_reached" else "progress","attemptId" to id,"stepsSinceBaseline" to total,"elapsedMs" to elapsed))
   if(ready)submit(id,"steps",mapOf("stepsSinceBaseline" to total,"elapsedMs" to elapsed,"baselineCapturedAt" to j.getLong("startedAt")))
  }
- private fun onLocation(l:Location){for((id,j)in tracks.toMap())if(j.optString("type")=="location"){
+ private fun onLocation(l:Location){for((id,j)in tracks.toMap())when(j.optString("type")){
+  "location"->{
   val distance=FloatArray(1);Location.distanceBetween(l.latitude,l.longitude,j.getDouble("lat"),j.getDouble("lng"),distance)
   val mock=if(Build.VERSION.SDK_INT>=31)l.isMock else l.isFromMockProvider
   val valid=!mock&&l.hasAccuracy()&&l.accuracy<=j.getInt("radiusM")&&distance[0]<=j.getInt("radiusM")
@@ -91,11 +92,26 @@ class TrackingService:Service(),SensorEventListener{
    continue
   }
   j.put("previousFix",JSONObject(fix));persist(id,j)
+  }
+  "walk"->walkProgress(id,j,l)
  }}
+ private fun walkProgress(id:String,j:JSONObject,l:Location){
+  val now=System.currentTimeMillis();val epoch=l.time;val mock=if(Build.VERSION.SDK_INT>=31)l.isMock else l.isFromMockProvider
+  val stale=now-epoch>120000;val accurate=l.hasAccuracy()&&l.accuracy<=50f
+  if(mock||stale||!accurate){Events.emit("location",mapOf("type" to "walk_progress","attemptId" to id,"distanceM" to j.optDouble("distanceM",0.0),"dwellMs" to j.optLong("activeDurationMs",0),"fix" to mapOf("lat" to l.latitude,"lng" to l.longitude,"accuracyM" to l.accuracy.toDouble(),"isMock" to mock,"epochMs" to epoch)));return}
+  val previous=j.optJSONObject("previousFix");var total=j.optDouble("distanceM",0.0);var active=j.optLong("activeDurationMs",0)
+  if(previous!=null){val elapsed=epoch-previous.getLong("epochMs");if(elapsed in 1000..120000){val segment=FloatArray(1);Location.distanceBetween(previous.getDouble("lat"),previous.getDouble("lng"),l.latitude,l.longitude,segment);val speed=segment[0]/(elapsed/1000.0);if(speed in 0.5..8.0){total+=segment[0];active+=elapsed}}}
+  val fix=mapOf("lat" to l.latitude,"lng" to l.longitude,"accuracyM" to l.accuracy.toDouble(),"isMock" to false,"epochMs" to epoch)
+  j.put("distanceM",total).put("activeDurationMs",active).put("previousFix",JSONObject(fix));val mode=j.optString("mode","duration")
+  val atDestination=if(mode=="destination"&&j.has("lat")&&j.has("lng")){val remaining=FloatArray(1);Location.distanceBetween(l.latitude,l.longitude,j.getDouble("lat"),j.getDouble("lng"),remaining);remaining[0]<=150f&&total>=100}else false
+  val ready=when(mode){"distance"->total>=j.optInt("targetDistanceM",1000);"destination"->atDestination;else->active>=j.optLong("targetDurationMs",900000)}
+  Events.emit("location",mapOf("type" to if(ready)"walk_satisfied" else "walk_progress","attemptId" to id,"distanceM" to total,"dwellMs" to active,"fix" to fix));persist(id,j)
+  if(ready)submit(id,"walk",mapOf("mode" to mode,"distanceM" to total,"activeDurationMs" to active)+fix)
+ }
  /** Completion is local and immediate. The event reaches Flutter when it is alive;
   * a durable record lets local storage reconcile after a process restart. */
  private fun submit(id:String,type:String,payload:Map<String,Any>){AlarmEngine.prefs(this).edit().putString("completion:$id",JSONObject().put("type",type).put("payload",JSONObject(payload)).put("completedAt",System.currentTimeMillis()).toString()).apply();AlarmEngine.cancel(this,id);remove(id)}
- private fun fail(id:String,j:JSONObject,reason:String){AlarmEngine.prefs(this).edit().putString("failure:$id",JSONObject().put("type",j.optString("type")).put("reason",reason).put("failedAt",System.currentTimeMillis()).toString()).apply();Events.emit(j.optString("type"),mapOf("type" to if(j.optString("type")=="steps")"sensor_lost"else"unavailable","attemptId" to id,"reason" to reason));AlarmEngine.cancel(this,id);remove(id)}
- private fun remove(id:String){tracks.remove(id);AlarmEngine.prefs(this).edit().remove("track:$id").apply();hasLocation=tracks.values.any{it.optString("type")=="location"};if(!hasLocation&&locationRegistered){fused.removeLocationUpdates(callback);locationRegistered=false};if(tracks.isEmpty()){stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}}
+ private fun fail(id:String,j:JSONObject,reason:String){AlarmEngine.prefs(this).edit().putString("failure:$id",JSONObject().put("type",j.optString("type")).put("reason",reason).put("failedAt",System.currentTimeMillis()).toString()).apply();Events.emit(if(j.optString("type")=="steps")"steps"else"location",mapOf("type" to if(j.optString("type")=="steps")"sensor_lost"else"unavailable","attemptId" to id,"reason" to reason));AlarmEngine.cancel(this,id);remove(id)}
+ private fun remove(id:String){tracks.remove(id);AlarmEngine.prefs(this).edit().remove("track:$id").apply();hasLocation=tracks.values.any{it.optString("type") in setOf("location","walk")};if(!hasLocation&&locationRegistered){fused.removeLocationUpdates(callback);locationRegistered=false};if(tracks.isEmpty()){stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}}
  override fun onDestroy(){sensors.unregisterListener(this);fused.removeLocationUpdates(callback);handler.removeCallbacksAndMessages(null);hasLocation=false;super.onDestroy()}
 }

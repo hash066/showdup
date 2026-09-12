@@ -1,9 +1,12 @@
 # ShowdUp
 
-ShowdUp is an Android accountability app: set a recurring commitment, choose
-step or location-dwell evidence, and keep receiving reminders until the attempt
-is verified or its window ends. ShowdUp Pro uses RevenueCat and can cover only
-the distracting apps a user explicitly selects during an active window.
+ShowdUp is a local-first Android alarm and commitment tracker. The first screen
+offers a regular alarm (handed to the installed Clock app) or a verified
+commitment alarm. Commitments use presets rather than free-form check-ins:
+foreground GPS walking time/distance/destination or a fixed 150 m /
+five-minute gym visit.
+ShowdUp Pro uses RevenueCat and can cover only the distracting apps selected by
+the user during an active attempt.
 
 The production flow is local-first. Commitments, attempts, reminders, sensor
 evidence, and history live on the Android device. Firebase remains available
@@ -42,3 +45,10 @@ and [docs/PRODUCTION_AUDIT.md](docs/PRODUCTION_AUDIT.md) for the plan-to-evidenc
 completion matrix. Listing copy and assets are in
 [docs/STORE_LISTING.md](docs/STORE_LISTING.md).
 Do not upload a bundle until every external checklist item is complete.
+
+Gym search uses the native Places SDK for Android. Copy
+`android/secrets.properties.example` to the ignored
+`android/secrets.properties`, add an Android-restricted `PLACES_API_KEY`, and
+enable only Places API (New). Without a key the app still builds and current-
+location pinning remains available, but search reports a clear setup error.
+See [docs/MAPS_SETUP.md](docs/MAPS_SETUP.md).

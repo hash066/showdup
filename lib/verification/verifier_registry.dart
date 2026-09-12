@@ -1,6 +1,7 @@
 import '../models/enums.dart';
 import 'location_verifier.dart';
 import 'steps_verifier.dart';
+import 'walk_verifier.dart';
 import 'verifier.dart';
 
 /// The only place that knows which verifiers exist. Adding one in v1.1
@@ -12,6 +13,7 @@ class VerifierRegistry {
           {
             VerifierType.steps: StepsVerifier.new,
             VerifierType.location: LocationVerifier.new,
+            VerifierType.walk: WalkVerifier.new,
           };
 
   final Map<VerifierType, Verifier Function()> _factories;
