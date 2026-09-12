@@ -6,7 +6,7 @@ class AppConfig {
     'FIREBASE_MESSAGING_SENDER_ID',
   );
   static const revenueCatKey = String.fromEnvironment('REVENUECAT_ANDROID_KEY');
-  static const oneSignalId = String.fromEnvironment('ONESIGNAL_APP_ID');
+  static const privacyPolicyUrl = String.fromEnvironment('PRIVACY_POLICY_URL');
   static const useEmulators = bool.fromEnvironment('USE_EMULATORS');
   static const emulatorHost = String.fromEnvironment(
     'EMULATOR_HOST',

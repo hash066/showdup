@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties. Do not commit android/key.properties
+# or the upload keystore. Paths are resolved relative to android/app.
+storeFile=../keystores/your-upload-key.jks
+storePassword=replace-with-keystore-password
+keyAlias=upload
+keyPassword=replace-with-key-password

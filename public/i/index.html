@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Join a ShowdUp battle</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0d1426;--card:#17213d;--ink:#f7f1e8;--muted:#aeb8d1;--accent:#67e8a5}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px}.card{max-width:440px;width:100%;background:var(--card);border:1px solid #30405f;border-radius:28px;padding:32px;text-align:center}.pet{font-size:64px}h1{font-size:30px;line-height:1.1}.code{font:800 36px/1 monospace;letter-spacing:.18em;color:var(--accent);padding:22px 0}.button{display:block;background:var(--accent);color:#07160e;text-decoration:none;font-weight:800;border-radius:14px;padding:14px}p{color:var(--muted)}
+  </style>
+</head>
+<body><main class="card"><div class="pet">🦊</div><h1>You’ve been challenged.</h1><p>Install or open ShowdUp, then enter this private battle code:</p><div id="code" class="code">------</div><a class="button" href="https://play.google.com/store/apps/details?id=com.rayyanshaikh.orbit">Get ShowdUp</a><p>The invite expires after seven days.</p></main><script>const parts=location.pathname.split('/').filter(Boolean);const code=(parts[parts.length-1]||'').toUpperCase();if(/^[A-Z0-9]{6}$/.test(code))document.getElementById('code').textContent=code;</script></body>
+</html>

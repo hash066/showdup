@@ -93,7 +93,7 @@ class LocationVerifier implements Verifier {
             ),
           ),
         );
-    await LocationChannel.startWatch(
+    final started = await LocationChannel.startWatch(
       attemptId: attempt.id,
       lat: cfg.lat,
       lng: cfg.lng,
@@ -101,6 +101,11 @@ class LocationVerifier implements Verifier {
       dwellMs: cfg.dwellMs,
       untilEpochMs: attempt.windowEndAt.millisecondsSinceEpoch,
     );
+    if (!started) {
+      throw StateError(
+        'Android could not start location verification. Check precise location and battery settings.',
+      );
+    }
   }
 
   @override

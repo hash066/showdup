@@ -6,9 +6,13 @@ import '../models/attempt.dart';
 import '../models/app_user.dart';
 import '../models/enums.dart';
 import '../platform/alarm_channel.dart';
+import '../platform/blocker_channel.dart';
+import '../platform/overlay_channel.dart';
+import '../models/pet.dart';
 import '../verification/verifier.dart';
 import '../verification/verifier_registry.dart';
 import 'repository.dart';
+import 'social_service.dart';
 
 class AppController extends ChangeNotifier {
   AppController(this.repository) {
@@ -17,6 +21,7 @@ class AppController extends ChangeNotifier {
         commitments = v;
         loading = false;
         _configure();
+        _syncOverlay();
         notifyListeners();
       }, onError: _error),
     );
@@ -24,17 +29,26 @@ class AppController extends ChangeNotifier {
       repository.attempts().listen((v) {
         attempts = v;
         _reconcile();
+        _syncRestrictions();
+        _syncOverlay();
+        _syncSocialOutcomes();
         notifyListeners();
       }, onError: _error),
     );
     _subs.add(
       repository.profile().listen((v) {
         user = v;
+        _syncRestrictions();
+        _syncOverlay();
         notifyListeners();
       }, onError: _error),
     );
     _timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      // The device owns attempt rollover in local-first mode. Firebase-backed
+      // sessions must not poll a cloud function while the app is open.
+      if (repository is LocalRepository) unawaited(refresh());
       _reconcile();
+      _syncOverlay();
       notifyListeners();
     });
     refresh();
@@ -61,12 +75,216 @@ class AppController extends ChangeNotifier {
 
   Future<void> refresh() async {
     try {
+      if (repository is LocalRepository) {
+        await _recoverNativeCompletions(repository as LocalRepository);
+        await _recoverNativeFailures(repository as LocalRepository);
+        await _recoverNativeReminderCounts(repository as LocalRepository);
+        await _recoverNativeExpirations(repository as LocalRepository);
+      }
       await repository.call('syncAttempts', {});
       error = null;
     } catch (e) {
       _error(e);
     }
     notifyListeners();
+  }
+
+  Future<void> _recoverNativeExpirations(LocalRepository repository) async {
+    final raw = await const MethodChannel(
+      'app.showdup/alarm',
+    ).invokeMethod<Map>('pendingExpirations');
+    if (raw == null || raw.isEmpty) return;
+    final acknowledged = <String>[];
+    for (final entry in raw.entries) {
+      if (await repository.recordNativeExpiration(
+        entry.key,
+        Map<String, dynamic>.from(entry.value as Map),
+      )) {
+        acknowledged.add(entry.key);
+      }
+    }
+    if (acknowledged.isNotEmpty) {
+      await const MethodChannel(
+        'app.showdup/alarm',
+      ).invokeMethod('acknowledgeExpirations', {'attemptIds': acknowledged});
+    }
+  }
+
+  PetSnapshot get petSnapshot {
+    final local = repository is LocalRepository
+        ? repository as LocalRepository
+        : null;
+    final now = DateTime.now();
+    final monday = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(Duration(days: now.weekday - 1));
+    final weekly = attempts
+        .where((a) => !a.windowEndAt.isBefore(monday))
+        .toList();
+    final recent = attempts
+        .where(
+          (a) => a.windowEndAt.isAfter(now.subtract(const Duration(days: 7))),
+        )
+        .toList();
+    final todayKey =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final today = attempts.where((a) => a.date == todayKey).toList();
+    final active = attempts
+        .where((a) => a.state == AttemptState.pending && a.isWindowOpen)
+        .firstOrNull;
+    final currentSnoozes = active?.snoozes ?? 0;
+    final penalty = local?.weeklyPetPenalty(monday) ?? 0;
+    final social = SocialService.instance;
+    final myUid = social.user?.uid;
+    final myScore = social.latestScores
+        .where((item) => item.uid == myUid)
+        .firstOrNull;
+    return PetSnapshot(
+      mascot: local?.selectedMascot ?? MascotId.fox,
+      mood: PetScoring.mood(
+        recentAttempts: recent,
+        currentSnoozes: currentSnoozes,
+        cracked: local?.petCracked ?? false,
+      ),
+      weeklyScore: PetScoring.normalizedScore(weekly, penalty: penalty),
+      todayCompleted: today
+          .where((a) => a.state == AttemptState.completed)
+          .length,
+      todayTotal: today.length,
+      streak: user?.stats.currentStreak ?? 0,
+      consecutiveMisses: PetScoring.consecutiveMisses(attempts),
+      burstCount: local?.burstCount ?? 0,
+      activeAttemptId: active?.id,
+      activeTitle: active == null
+          ? null
+          : commitment(active.commitmentId)?.title,
+      rank: myScore?.rank,
+      friendGlyphs: social.latestScores
+          .where((item) => item.uid != myUid)
+          .take(3)
+          .map((item) => MascotId.fromWire(item.mascot).fallbackGlyph)
+          .toList(),
+      topRanks: social.latestScores
+          .take(5)
+          .map(
+            (item) => {
+              'rank': item.rank,
+              'name': item.displayName,
+              'score': item.score,
+            },
+          )
+          .toList(),
+    );
+  }
+
+  Future<void> _syncSocialOutcomes() async {
+    final local = repository;
+    if (local is! LocalRepository || !SocialService.instance.googleLinked) {
+      return;
+    }
+    final terminal =
+        attempts.where((attempt) {
+          final now = DateTime.now();
+          final monday = DateTime(now.year, now.month, now.day)
+              .subtract(Duration(days: now.weekday - 1));
+          return attempt.state.isTerminal && !attempt.windowEndAt.isBefore(monday);
+        }).toList()
+          ..sort((a, b) => a.windowEndAt.compareTo(b.windowEndAt));
+    for (final attempt in terminal) {
+      if (local.isSocialOutcomeSynced(attempt.id)) continue;
+      try {
+        if (await SocialService.instance.syncOutcome(attempt, petSnapshot)) {
+          await local.markSocialOutcomeSynced(attempt.id);
+        }
+      } catch (_) {
+        // Retry on the next repository update; local completion remains valid.
+        return;
+      }
+    }
+  }
+
+  Future<void> setMascot(MascotId mascot) async {
+    final local = repository;
+    if (local is LocalRepository) await local.setMascot(mascot);
+    await _syncOverlay();
+    notifyListeners();
+  }
+
+  Future<void> _syncOverlay() async {
+    if (preview || repository is! LocalRepository) return;
+    try {
+      await OverlayChannel.sync(petSnapshot);
+    } on MissingPluginException {
+      // Overlay is Android-only.
+    } on PlatformException {
+      // Revoked overlay permission must not make the app unusable.
+    }
+  }
+
+  Future<void> _recoverNativeCompletions(LocalRepository repository) async {
+    final raw = await const MethodChannel(
+      'app.showdup/alarm',
+    ).invokeMethod<Map>('pendingCompletions');
+    if (raw == null || raw.isEmpty) return;
+    final acknowledged = <String>[];
+    for (final entry in raw.entries) {
+      final saved = await repository.recordNativeCompletion(
+        entry.key,
+        Map<String, dynamic>.from(entry.value as Map),
+      );
+      if (saved) acknowledged.add(entry.key);
+    }
+    if (acknowledged.isNotEmpty) {
+      await const MethodChannel(
+        'app.showdup/alarm',
+      ).invokeMethod('acknowledgeCompletions', {'attemptIds': acknowledged});
+    }
+  }
+
+  Future<void> _recoverNativeReminderCounts(LocalRepository repository) async {
+    final raw = await const MethodChannel(
+      'app.showdup/alarm',
+    ).invokeMethod<Map>('pendingReminderEvents');
+    if (raw == null) return;
+    final counts = Map<String, dynamic>.from(
+      raw['counts'] as Map? ?? const <String, dynamic>{},
+    );
+    await repository.recordReminderCounts(counts);
+
+    // Individual events are useful only until their durable cumulative count
+    // has been merged. Removing them bounds native storage while the counts
+    // remain available for idempotent recovery after a crash.
+    final events = Map<String, dynamic>.from(
+      raw['events'] as Map? ?? const <String, dynamic>{},
+    );
+    if (events.isNotEmpty) {
+      await const MethodChannel('app.showdup/alarm').invokeMethod(
+        'acknowledgeReminderEvents',
+        {'eventIds': events.keys.toList()},
+      );
+    }
+  }
+
+  Future<void> _recoverNativeFailures(LocalRepository repository) async {
+    final raw = await const MethodChannel(
+      'app.showdup/alarm',
+    ).invokeMethod<Map>('pendingFailures');
+    if (raw == null || raw.isEmpty) return;
+    final acknowledged = <String>[];
+    for (final entry in raw.entries) {
+      final saved = await repository.recordNativeFailure(
+        entry.key,
+        Map<String, dynamic>.from(entry.value as Map),
+      );
+      if (saved) acknowledged.add(entry.key);
+    }
+    if (acknowledged.isNotEmpty) {
+      await const MethodChannel(
+        'app.showdup/alarm',
+      ).invokeMethod('acknowledgeFailures', {'attemptIds': acknowledged});
+    }
   }
 
   Commitment? commitment(String id) {
@@ -88,8 +306,41 @@ class AppController extends ChangeNotifier {
               .toList(),
         },
       );
+      await _syncRestrictions();
     } catch (e) {
       _error(e);
+    }
+  }
+
+  Future<void> _syncRestrictions() async {
+    if (preview) return;
+    final sessions = <BlockerSession>[];
+    if (user?.isPro == true) {
+      for (final attempt in attempts) {
+        if (attempt.state != AttemptState.pending || !attempt.isWindowOpen) {
+          continue;
+        }
+        final owner = commitment(attempt.commitmentId);
+        if (owner == null || !owner.restrictions.enabled) continue;
+        final packages = owner.restrictions.packages
+            .where((package) => !Restrictions.neverBlock.contains(package))
+            .toList();
+        if (packages.isEmpty) continue;
+        sessions.add(
+          BlockerSession(
+            attemptId: attempt.id,
+            commitmentId: attempt.commitmentId,
+            packages: packages,
+            activeFromEpochMs: attempt.windowStartAt.millisecondsSinceEpoch,
+            activeUntilEpochMs: attempt.windowEndAt.millisecondsSinceEpoch,
+          ),
+        );
+      }
+    }
+    try {
+      await BlockerChannel.sync(sessions);
+    } on MissingPluginException {
+      // Unit tests and non-Android previews do not provide this channel.
     }
   }
 
@@ -209,6 +460,7 @@ class AppController extends ChangeNotifier {
       await stop(a);
     }
     if (!preview) {
+      await BlockerChannel.stop();
       await const MethodChannel('app.showdup/alarm').invokeMethod('stopAll');
     }
     await repository.close();

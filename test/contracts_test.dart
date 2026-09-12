@@ -42,6 +42,23 @@ void main() {
       DateTime.utc(2026, 9, 14, 1),
     );
   });
+  test('advanced schedule resolves a different window for each weekday', () {
+    const advanced = CommitmentSchedule(
+      daysOfWeek: [1, 2],
+      windowStartLocal: '06:30',
+      windowEndLocal: '09:00',
+      timezone: 'Asia/Kolkata',
+      dayWindows: {2: DailyWindow(startLocal: '18:00', endLocal: '20:00')},
+    );
+    final monday = resolveWindow(advanced, DateTime(2026, 9, 7));
+    final tuesday = resolveWindow(advanced, DateTime(2026, 9, 8));
+    expect(monday.start, DateTime.utc(2026, 9, 7, 1));
+    expect(tuesday.start, DateTime.utc(2026, 9, 8, 12, 30));
+    expect(
+      CommitmentSchedule.fromJson(advanced.toJson()).dayWindows[2]?.endLocal,
+      '20:00',
+    );
+  });
   test('reminder count, spacing and terminal cancellation', () {
     final w = resolveWindow(s, DateTime(2026, 9, 8));
     final times = reminderTimes(w.start, w.end, const ReminderConfig());
@@ -69,6 +86,16 @@ void main() {
         windowStartLocal: '-1:30',
         windowEndLocal: '09:00',
         timezone: 'Asia/Kolkata',
+      ).validate(),
+      isNotNull,
+    );
+    expect(
+      const CommitmentSchedule(
+        daysOfWeek: [1],
+        windowStartLocal: '06:30',
+        windowEndLocal: '09:00',
+        timezone: 'Asia/Kolkata',
+        dayWindows: {2: DailyWindow(startLocal: '08:00', endLocal: '09:00')},
       ).validate(),
       isNotNull,
     );

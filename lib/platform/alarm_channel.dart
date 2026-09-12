@@ -33,15 +33,17 @@ class AlarmPermissionStatus {
 }
 
 class AlarmEvent {
-  const AlarmEvent(this.type, this.attemptId, this.index);
-  final String type; // fired | snoozed
+  const AlarmEvent(this.type, this.attemptId, this.index, {this.source});
+  final String type; // fired | snoozed | expired
   final String attemptId;
   final int index;
+  final String? source; // manual | automatic
 
   factory AlarmEvent.fromMap(Map m) => AlarmEvent(
     m['type'] as String,
     m['attemptId'] as String,
     (m['index'] as num?)?.toInt() ?? 0,
+    source: m['source'] as String?,
   );
 }
 
@@ -82,6 +84,12 @@ class AlarmChannel {
   static Future<bool> requestPermission(String which) async =>
       await _m.invokeMethod<bool>('requestPermission', {'which': which}) ??
       false;
+
+  /// Returns and consumes the attempt opened from an alarm notification.
+  /// Native code clears it after this call so a process resume cannot reopen
+  /// the same attempt repeatedly.
+  static Future<String?> getLaunchAttempt() =>
+      _m.invokeMethod<String>('getLaunchAttempt');
 
   static Stream<AlarmEvent> events() =>
       _e.receiveBroadcastStream().map((e) => AlarmEvent.fromMap(e as Map));

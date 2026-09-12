@@ -87,11 +87,16 @@ class StepsVerifier implements Verifier {
             ),
           ),
         );
-    await StepsChannel.startTracking(
+    final started = await StepsChannel.startTracking(
       attemptId: attempt.id,
       baselineSteps: reading.cumulativeSteps,
       targetSteps: cfg.targetSteps,
     );
+    if (!started) {
+      throw StateError(
+        'Android could not start step verification. Check battery and activity permissions.',
+      );
+    }
   }
 
   @override

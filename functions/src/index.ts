@@ -1,68 +1,452 @@
+import {randomBytes} from 'node:crypto';
 import {initializeApp} from 'firebase-admin/app';
 import {getAuth} from 'firebase-admin/auth';
-import {getFirestore,FieldValue,Timestamp} from 'firebase-admin/firestore';
-import {onCall,onRequest,HttpsError} from 'firebase-functions/v2/https';
-import {onSchedule} from 'firebase-functions/v2/scheduler';
-import {defineSecret} from 'firebase-functions/params';
-import {timingSafeEqual} from 'node:crypto';
+import {FieldValue, getFirestore, Timestamp} from 'firebase-admin/firestore';
+import {HttpsError, onCall} from 'firebase-functions/v2/https';
 import {DateTime} from 'luxon';
 import {z} from 'zod';
-import {commitmentSchema,checkStepsPlausibility,checkLocationPlausibility} from './validation';
-import {resolveWindow,nextStats,evidenceWindow} from './domain';
-import {Commitment,Attempt,StepsConfig,LocationConfig,AttemptState,attemptId} from './types';
+import {nextBattleScore} from './domain';
+
 initializeApp();
-const db=getFirestore(),rcSecret=defineSecret('REVENUECAT_WEBHOOK_AUTH');
-const id=z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),dateSchema=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(s=>DateTime.fromISO(s).isValid);
-function uid(req:{auth?:{uid:string}}){if(!req.auth)throw new HttpsError('unauthenticated','Sign in to continue.');return req.auth.uid;}
-function parse<T>(schema:z.ZodType<T>,data:unknown):T{const p=schema.safeParse(data);if(!p.success)throw new HttpsError('invalid-argument',p.error.issues.map(i=>i.message).join('. '));return p.data;}
-function owner(data:FirebaseFirestore.DocumentData|undefined,u:string){if(!data||data.ownerUid!==u)throw new HttpsError('not-found','Not found.');}
-async function ensureAttempt(cid:string,c:Commitment,now=Date.now()){
- const local=DateTime.fromMillis(now,{zone:c.schedule.timezone});
- for(const day of [local,local.plus({days:1})]){const date=day.toISODate()!,w=resolveWindow(c.schedule,date);if(!c.schedule.daysOfWeek.includes(w.weekday)||w.start>now+3600000||w.end<now)continue;
- const ref=db.doc(`attempts/${attemptId(cid,date)}`);await db.runTransaction(async tx=>{const s=await tx.get(ref);if(s.exists)return;tx.create(ref,{commitmentId:cid,ownerUid:c.ownerUid,date,windowStartAt:Timestamp.fromMillis(w.start),windowEndAt:Timestamp.fromMillis(w.end),state:'pending',remindersFired:0,snoozes:0,createdAt:FieldValue.serverTimestamp()});});}
+const db = getFirestore();
+const dayMs = 24 * 60 * 60 * 1000;
+const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const battleIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const mascotSchema = z.enum(['fox', 'cat', 'puppy', 'penguin', 'capybara']);
+
+// Capacity guardrails, not a monetary hard cap. Keeping minInstances at zero
+// prevents idle social services from accruing instance charges.
+const socialCall = {
+  enforceAppCheck: true,
+  region: 'us-central1' as const,
+  memory: '256MiB' as const,
+  cpu: 1,
+  minInstances: 0,
+  maxInstances: 2,
+  concurrency: 20,
+  timeoutSeconds: 15,
+};
+
+type AuthRequest = {auth?: {uid: string; token: Record<string, any>}};
+
+function uid(req: {auth?: {uid: string}}) {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in to continue.');
+  return req.auth.uid;
 }
-export const createCommitment=onCall(async req=>{
- const u=uid(req),data=parse(commitmentSchema,req.data),ref=db.collection('commitments').doc();
- await db.runTransaction(async tx=>{const ur=db.doc(`users/${u}`),user=await tx.get(ur),active=await tx.get(db.collection('commitments').where('ownerUid','==',u).where('status','==','active'));if(!user.data()?.isPro&&!active.empty)throw new HttpsError('resource-exhausted','Free includes one active commitment. Pause one or explore Pro.');tx.set(ur,{commitmentRevision:FieldValue.increment(1)},{merge:true});tx.create(ref,{...data,ownerUid:u,status:'active',createdAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp()});});
- await ensureAttempt(ref.id,{...data,ownerUid:u,status:'active'} as Commitment);return {commitmentId:ref.id};
+
+function parse<T>(schema: z.ZodType<T>, data: unknown): T {
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) {
+    throw new HttpsError('invalid-argument', parsed.error.issues
+      .map((issue) => issue.message).join('. '));
+  }
+  return parsed.data;
+}
+
+function requireGoogle(req: AuthRequest) {
+  const userId = uid(req);
+  const providers = req.auth?.token.firebase?.identities ?? {};
+  if (!providers['google.com']) {
+    throw new HttpsError('failed-precondition',
+      'Connect Google before using battles.');
+  }
+  return userId;
+}
+
+function requireRecentGoogleAuth(req: AuthRequest) {
+  const providers = req.auth?.token.firebase?.identities ?? {};
+  if (!providers['google.com']) return;
+  const authenticatedAt = Number(req.auth?.token.auth_time ?? 0);
+  if (!Number.isFinite(authenticatedAt) ||
+      Date.now() / 1000 - authenticatedAt > 5 * 60) {
+    throw new HttpsError('failed-precondition',
+      'Sign in again before deleting your social account.');
+  }
+}
+
+function identityFields(req: AuthRequest, mascot = 'fox') {
+  const displayName = String(req.auth?.token.name ?? 'Player')
+    .trim().slice(0, 40) || 'Player';
+  const photoUrl = typeof req.auth?.token.picture === 'string'
+    ? req.auth.token.picture.slice(0, 2048)
+    : null;
+  return {displayName, photoUrl, mascot, updatedAt: FieldValue.serverTimestamp()};
+}
+
+function weekKey(zone: string, now = Date.now()) {
+  const local = DateTime.fromMillis(now, {zone});
+  if (!local.isValid) {
+    throw new HttpsError('invalid-argument', 'Invalid timezone.');
+  }
+  return local.startOf('day').minus({days: local.weekday - 1}).toISODate()!;
+}
+
+async function rateLimit(
+  userId: string,
+  action: string,
+  limit: number,
+  windowMs = dayMs,
+) {
+  const ref = db.doc(`rateLimits/${userId}_${action}`);
+  const now = Date.now();
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.data();
+    const start = Number(data?.windowStartedAt ?? now);
+    const expired = start + windowMs <= now;
+    const count = expired ? 0 : Number(data?.count ?? 0);
+    if (!Number.isSafeInteger(count) || count < 0 || count >= limit) {
+      throw new HttpsError('resource-exhausted',
+        'Too many requests. Try again later.');
+    }
+    tx.set(ref, {
+      uid: userId,
+      action,
+      count: count + 1,
+      windowStartedAt: expired ? now : start,
+      expiresAt: Timestamp.fromMillis(now + windowMs * 2),
+    });
+  });
+}
+
+async function ensureBattleWeek(ref: FirebaseFirestore.DocumentReference) {
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const current = weekKey(snap.data()!.timezone);
+    if (snap.data()!.weekKey === current) return;
+    const scores = await tx.get(ref.collection('scores').limit(10));
+    tx.update(ref, {weekKey: current, updatedAt: FieldValue.serverTimestamp()});
+    for (const score of scores.docs) {
+      tx.set(score.ref, {
+        earned: 0,
+        eligibleAttempts: 0,
+        penalties: 0,
+        score: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, {merge: true});
+    }
+  });
+}
+
+export const createBattle = onCall(socialCall, async (req) => {
+  const userId = requireGoogle(req);
+  const data = parse(z.object({
+    name: z.string().trim().min(1).max(40),
+    timezone: z.string().min(1).max(80),
+    mascot: mascotSchema,
+  }).strict(), req.data);
+  const week = weekKey(data.timezone);
+  await rateLimit(userId, 'createBattle', 2);
+
+  const battleRef = db.collection('battles').doc();
+  const membershipRef = db.doc(`battleMemberships/${userId}`);
+  const battleId = await db.runTransaction(async (tx) => {
+    const membership = await tx.get(membershipRef);
+    if (membership.exists) {
+      const existingId = String(membership.data()!.battleId);
+      const existingBattle = await tx.get(db.doc(`battles/${existingId}`));
+      const existingMembers = existingBattle.data()?.memberUids;
+      if (existingBattle.exists && Array.isArray(existingMembers) &&
+          existingMembers.includes(userId)) {
+        return existingId;
+      }
+      // A stale pointer is overwritten atomically by the new membership below.
+    }
+    const identity = identityFields(req, data.mascot);
+    tx.create(battleRef, {
+      name: data.name,
+      creatorUid: userId,
+      timezone: data.timezone,
+      weekKey: week,
+      memberUids: [userId],
+      active: false,
+      activatedAt: null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.create(battleRef.collection('scores').doc(userId), {
+      displayName: identity.displayName,
+      mascot: data.mascot,
+      petMood: 'happy',
+      earned: 0,
+      eligibleAttempts: 0,
+      penalties: 0,
+      consecutiveMisses: 0,
+      cracked: false,
+      score: 0,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.set(membershipRef, {
+      uid: userId,
+      battleId: battleRef.id,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.set(db.doc(`socialUsers/${userId}`), identity, {merge: true});
+    return battleRef.id;
+  });
+  return {battleId};
 });
-export const updateCommitment=onCall(async req=>{
- const u=uid(req),cid=parse(id,req.data?.commitmentId),patch=req.data?.patch;
- if(!patch||typeof patch!=='object'||Array.isArray(patch)||Object.keys(patch).some(k=>!['title','verifierType','verifierConfig','schedule','reminder','restrictions','status'].includes(k)))throw new HttpsError('invalid-argument','Unsupported field.');
- const ref=db.doc(`commitments/${cid}`);await db.runTransaction(async tx=>{
- const snap=await tx.get(ref);owner(snap.data(),u);const c=snap.data() as Commitment,status=parse(z.enum(['active','paused','archived']),patch.status??c.status);
- if(c.status==='archived')throw new HttpsError('failed-precondition','Archived commitments cannot be changed.');
- const ur=db.doc(`users/${u}`),user=await tx.get(ur),active=await tx.get(db.collection('commitments').where('ownerUid','==',u).where('status','==','active')),pending=await tx.get(db.collection('attempts').where('commitmentId','==',cid).where('state','==','pending'));
- if(pending.docs.some(d=>(d.data().windowStartAt as Timestamp).toMillis()<=Date.now())&&Object.keys(patch).some(k=>k!=='status'&&k!=='title'))throw new HttpsError('failed-precondition','End today before changing an open window or verifier.');
- if(status==='active'&&c.status!=='active'&&!user.data()?.isPro&&!active.empty)throw new HttpsError('resource-exhausted','Free includes one active commitment.');
- const merged={...c,...patch},data=parse(commitmentSchema,Object.fromEntries(['title','verifierType','verifierConfig','schedule','reminder','restrictions'].map(k=>[k,merged[k]])));
- tx.update(ref,{...data,status,updatedAt:FieldValue.serverTimestamp()});let stats=user.data()?.stats;
- for(const p of pending.docs){if(status!=='active'){tx.update(p.ref,{state:'abandoned',endedReason:'user_ended'});stats=nextStats(stats,'abandoned');}else if(Object.keys(patch).some(k=>!['title','status'].includes(k)))tx.delete(p.ref);}
- tx.set(ur,{commitmentRevision:FieldValue.increment(1),...(stats?{stats}:{})},{merge:true});});
- const latest=(await ref.get()).data() as Commitment;if(latest.status==='active')await ensureAttempt(cid,latest);return {ok:true};
+
+export const createBattleInvite = onCall(socialCall, async (req) => {
+  const userId = requireGoogle(req);
+  const battleId = parse(battleIdSchema, req.data?.battleId);
+  await rateLimit(userId, 'invite', 10);
+  const battle = await db.doc(`battles/${battleId}`).get();
+  const members = battle.data()?.memberUids;
+  if (!battle.exists || !Array.isArray(members) || !members.includes(userId)) {
+    throw new HttpsError('not-found', 'Battle not found.');
+  }
+  if (members.length >= 10) {
+    throw new HttpsError('resource-exhausted',
+      'This battle already has 10 people.');
+  }
+
+  const expiresAt = Date.now() + 7 * dayMs;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = randomBytes(5).toString('base64url')
+      .replace(/[-_]/g, '').slice(0, 6).toUpperCase();
+    if (code.length !== 6) continue;
+    try {
+      await db.doc(`battleInvites/${code}`).create({
+        code,
+        battleId,
+        inviterUid: userId,
+        expiresAt: Timestamp.fromMillis(expiresAt),
+        uses: 0,
+        maxUses: 9,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return {code, url: `https://showdup-f0799.web.app/i/${code}`, expiresAt};
+    } catch (error) {
+      const errorCode = (error as {code?: number | string}).code;
+      if (errorCode !== 6 && errorCode !== 'already-exists') throw error;
+    }
+  }
+  throw new HttpsError('internal', 'Could not create an invite.');
 });
-export const submitEvidence=onCall(async req=>{
- const u=uid(req),a=parse(z.object({commitmentId:id,date:dateSchema,type:z.enum(['steps','location']),payload:z.record(z.unknown())}),req.data),aid=attemptId(a.commitmentId,a.date);
- return db.runTransaction(async tx=>{const ref=db.doc(`attempts/${aid}`),snap=await tx.get(ref),attempt=snap.data() as Attempt;owner(attempt,u);
- if(attempt.state==='completed')return {state:'completed',attemptId:aid};if(attempt.state!=='pending')throw new HttpsError('failed-precondition','This attempt has already ended.');
- const cs=await tx.get(db.doc(`commitments/${a.commitmentId}`)),c=cs.data() as Commitment;owner(c,u);if(c.verifierType!==a.type)throw new HttpsError('invalid-argument','Verifier does not match.');
- const now=Date.now(),start=attempt.windowStartAt.toMillis(),end=attempt.windowEndAt.toMillis(),p=a.payload,elapsed=Number(a.type==='steps'?p.elapsedMs:p.dwellMs);
- if(!evidenceWindow(now,start,end,elapsed))throw new HttpsError('failed-precondition','Evidence must be recorded within the open window.');
- let error:string|null,safe:Record<string,unknown>;
- if(a.type==='steps'){safe={stepsSinceBaseline:p.stepsSinceBaseline,elapsedMs:p.elapsedMs,baselineCapturedAt:p.baselineCapturedAt};if(typeof p.baselineCapturedAt!=='number'||p.baselineCapturedAt<start-5000||p.baselineCapturedAt>now||Math.abs(now-p.baselineCapturedAt-elapsed)>30000)throw new HttpsError('invalid-argument','Step baseline is outside this window.');error=checkStepsPlausibility({stepsSinceBaseline:p.stepsSinceBaseline as number,elapsedMs:p.elapsedMs as number,config:c.verifierConfig as StepsConfig});}
- else{safe=Object.fromEntries(['lat','lng','accuracyM','isMock','dwellMs','previousFix','epochMs','enteredAt'].filter(k=>p[k]!==undefined).map(k=>[k,p[k]]));if(typeof p.epochMs!=='number'||Math.abs(now-p.epochMs)>120000||typeof p.enteredAt!=='number'||p.enteredAt<start||p.epochMs-p.enteredAt<elapsed)throw new HttpsError('invalid-argument','Arrival and dwell must occur within this window.');error=checkLocationPlausibility({...safe,config:c.verifierConfig as LocationConfig} as Parameters<typeof checkLocationPlausibility>[0]);}
- if(error)throw new HttpsError('invalid-argument',error);const ur=db.doc(`users/${u}`),user=await tx.get(ur);tx.update(ref,{state:'completed',endedReason:'verified',completedAt:FieldValue.serverTimestamp(),evidence:{type:a.type,payload:safe,capturedAt:FieldValue.serverTimestamp(),confidence:'plausible'}});tx.set(ur,{stats:nextStats(user.data()?.stats,'completed')},{merge:true});return {state:'completed',attemptId:aid};});
+
+export const joinBattle = onCall(socialCall, async (req) => {
+  const userId = requireGoogle(req);
+  const code = parse(z.string().regex(/^[A-Z0-9]{6}$/), req.data?.code);
+  await rateLimit(userId, 'join', 10);
+  const inviteRef = db.doc(`battleInvites/${code}`);
+  const membershipRef = db.doc(`battleMemberships/${userId}`);
+
+  return db.runTransaction(async (tx) => {
+    const invite = await tx.get(inviteRef);
+    const membership = await tx.get(membershipRef);
+    const expiresAt = invite.data()?.expiresAt;
+    if (!invite.exists || !(expiresAt instanceof Timestamp) ||
+        expiresAt.toMillis() <= Date.now()) {
+      throw new HttpsError('not-found', 'Invite expired or invalid.');
+    }
+    const inviteBattleId = String(invite.data()!.battleId);
+    const existingBattleId = membership.exists
+      ? String(membership.data()!.battleId)
+      : null;
+    const existingBattle = existingBattleId != null &&
+        existingBattleId !== inviteBattleId
+      ? await tx.get(db.doc(`battles/${existingBattleId}`))
+      : null;
+    const existingMembers = existingBattle?.data()?.memberUids;
+    if (existingBattle?.exists === true && Array.isArray(existingMembers) &&
+        existingMembers.includes(userId)) {
+      throw new HttpsError('failed-precondition',
+        'Leave your current battle before joining another one.');
+    }
+    const battleRef = db.doc(`battles/${inviteBattleId}`);
+    const battle = await tx.get(battleRef);
+    if (!battle.exists) throw new HttpsError('not-found', 'Battle not found.');
+    const members = battle.data()!.memberUids;
+    if (!Array.isArray(members)) {
+      throw new HttpsError('internal', 'Battle membership is invalid.');
+    }
+    if (members.includes(userId)) {
+      return {battleId: battle.id, alreadyMember: true};
+    }
+    if (members.length >= 10 ||
+        Number(invite.data()!.uses ?? 0) >= Number(invite.data()!.maxUses ?? 9)) {
+      throw new HttpsError('resource-exhausted',
+        'This battle already has 10 people.');
+    }
+
+    const nextMembers = [...members, userId];
+    const activating = battle.data()!.active !== true && nextMembers.length >= 2;
+    const identity = identityFields(req);
+    tx.update(battleRef, {
+      memberUids: nextMembers,
+      active: nextMembers.length >= 2,
+      ...(activating ? {activatedAt: FieldValue.serverTimestamp()} : {}),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.create(battleRef.collection('scores').doc(userId), {
+      displayName: identity.displayName,
+      mascot: 'fox',
+      petMood: 'happy',
+      earned: 0,
+      eligibleAttempts: 0,
+      penalties: 0,
+      consecutiveMisses: 0,
+      cracked: false,
+      score: 0,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.set(membershipRef, {
+      uid: userId,
+      battleId: battle.id,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.set(db.doc(`socialUsers/${userId}`), identity, {merge: true});
+    tx.update(inviteRef, {uses: FieldValue.increment(1)});
+    return {battleId: battle.id, alreadyMember: false};
+  });
 });
-async function finish(u:string,cid:string,date:string,state:AttemptState,reason:string){return db.runTransaction(async tx=>{const ref=db.doc(`attempts/${attemptId(cid,date)}`),snap=await tx.get(ref),a=snap.data() as Attempt;owner(a,u);if(a.state!=='pending')return {state:a.state};const ur=db.doc(`users/${u}`),user=await tx.get(ur);tx.update(ref,{state,endedReason:reason});tx.set(ur,{stats:nextStats(user.data()?.stats,state)},{merge:true});return {state};});}
-export const endAttempt=onCall(async req=>{const u=uid(req),a=parse(z.object({commitmentId:id,date:dateSchema,reason:z.literal('user_ended')}).strict(),req.data);return finish(u,a.commitmentId,a.date,'abandoned','user_ended');});
-export const reportVerifierFailure=onCall(async req=>{const u=uid(req),a=parse(z.object({commitmentId:id,date:dateSchema,reason:z.enum(['sensor_missing','permission_denied','sensor_lost','location_unavailable'])}).strict(),req.data);return finish(u,a.commitmentId,a.date,'unverifiable','verifier_error');});
-export const syncAttempts=onCall(async req=>{const u=uid(req),cs=await db.collection('commitments').where('ownerUid','==',u).where('status','==','active').get();for(const c of cs.docs)await ensureAttempt(c.id,c.data() as Commitment);return {ok:true};});
-export const recordReminderEvent=onCall(async req=>{const u=uid(req),a=parse(z.object({attemptId:id,eventId:z.string().min(1).max(160),type:z.enum(['fired','snoozed'])}),req.data);await db.runTransaction(async tx=>{const ref=db.doc(`attempts/${a.attemptId}`),s=await tx.get(ref);owner(s.data(),u);const event=ref.collection('events').doc(a.eventId.replace(/\//g,'_')),prior=await tx.get(event);if(prior.exists||s.data()?.state!=='pending')return;tx.create(event,{type:a.type,at:FieldValue.serverTimestamp()});tx.update(ref,{[a.type==='fired'?'remindersFired':'snoozes']:FieldValue.increment(1)});});return {ok:true};});
-export const rolloverAttempts=onSchedule('every 15 minutes',async()=>{const now=Date.now();let cursor:FirebaseFirestore.QueryDocumentSnapshot|undefined;do{let q=db.collection('commitments').where('status','==','active').orderBy('__name__').limit(200);if(cursor)q=q.startAfter(cursor);const page=await q.get();for(const c of page.docs)await ensureAttempt(c.id,c.data() as Commitment,now);cursor=page.size===200?page.docs.at(-1):undefined;}while(cursor);const expired=await db.collection('attempts').where('state','==','pending').where('windowEndAt','<',Timestamp.fromMillis(now)).limit(400).get();for(const s of expired.docs){const a=s.data() as Attempt;await finish(a.ownerUid,a.commitmentId,a.date,'expired','window_expired');}});
-export const revenueCatWebhook=onRequest({secrets:[rcSecret]},async(req,res)=>{
- const expected=Buffer.from(rcSecret.value()),actual=Buffer.from(req.get('authorization')??'');if(req.method!=='POST'||actual.length!==expected.length||!expected.length||!timingSafeEqual(actual,expected)){res.status(401).send('Unauthorized');return;}
- const e=req.body?.event;if(!e||typeof e.id!=='string'||typeof e.app_user_id!=='string'||!Number.isFinite(e.event_timestamp_ms)){res.status(400).send('Malformed event');return;}if(e.type==='TEST'){res.status(200).send('OK');return;}if(!e.entitlement_ids?.includes('pro')||!['INITIAL_PURCHASE','RENEWAL','UNCANCELLATION','NON_RENEWING_PURCHASE','PRODUCT_CHANGE','CANCELLATION','BILLING_ISSUE','EXPIRATION'].includes(e.type)){res.status(200).send('Ignored');return;}
- try{await getAuth().getUser(e.app_user_id);}catch{res.status(400).send('Unknown Firebase user');return;}
- await db.runTransaction(async tx=>{const ur=db.doc(`users/${e.app_user_id}`),u=await tx.get(ur);if((u.data()?.lastRevenueCatEventMs??0)>=e.event_timestamp_ms)return;const expiry=e.expiration_at_ms,isPro=e.type!=='EXPIRATION'&&(expiry===null||Number.isFinite(expiry)&&expiry>Date.now());tx.set(ur,{isPro,proExpiresAt:Number.isFinite(expiry)?Timestamp.fromMillis(expiry):null,lastRevenueCatEventMs:e.event_timestamp_ms},{merge:true});});res.status(200).send('OK');
+
+export const leaveBattle = onCall(socialCall, async (req) => {
+  const userId = requireGoogle(req);
+  const battleId = parse(battleIdSchema, req.data?.battleId);
+  await rateLimit(userId, 'leave', 5);
+  const ref = db.doc(`battles/${battleId}`);
+  const membershipRef = db.doc(`battleMemberships/${userId}`);
+  const deleted = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const membership = await tx.get(membershipRef);
+    const data = snap.data();
+    const members = data?.memberUids;
+    if (!data || !Array.isArray(members) || !members.includes(userId)) {
+      return false;
+    }
+    const nextMembers = (members as string[]).filter((item) => item !== userId);
+    if (nextMembers.length === 0) tx.delete(ref);
+    else {
+      tx.update(ref, {
+        memberUids: nextMembers,
+        creatorUid: data.creatorUid === userId ? nextMembers[0] : data.creatorUid,
+        active: nextMembers.length >= 2,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    tx.delete(ref.collection('scores').doc(userId));
+    if (membership.data()?.battleId === battleId) tx.delete(membershipRef);
+    return nextMembers.length === 0;
+  });
+  if (deleted) await db.recursiveDelete(ref);
+  return {ok: true};
 });
-export const deleteAccount=onCall(async req=>{const u=uid(req);if(Date.now()/1000-(req.auth?.token.auth_time??0)>300)throw new HttpsError('failed-precondition','Sign in again before deleting your account.');for(const col of ['attempts','commitments']){const ss=await db.collection(col).where('ownerUid','==',u).get();for(const s of ss.docs)await db.recursiveDelete(s.ref);}await db.doc(`users/${u}`).delete();await getAuth().deleteUser(u);return {ok:true};});
+
+export const submitBattleOutcome = onCall(socialCall, async (req) => {
+  const userId = requireGoogle(req);
+  const data = parse(z.object({
+    eventId: id,
+    outcome: z.enum(['completed', 'expired', 'abandoned', 'unverifiable']),
+    snoozes: z.number().int().min(0).max(20),
+    resolvedAt: z.number().int().positive(),
+    // Kept for wire compatibility; server state below never trusts these.
+    petMood: z.enum(['happy', 'uneasy', 'sad', 'cracked', 'recovery']),
+    burstCount: z.number().int().min(0),
+    mascot: mascotSchema,
+  }).strict(), req.data);
+  await rateLimit(userId, 'outcome', 25);
+
+  const membership = await db.doc(`battleMemberships/${userId}`).get();
+  if (!membership.exists) return {scored: false};
+  const battle = await db.doc(`battles/${membership.data()!.battleId}`).get();
+  const members = battle.data()?.memberUids;
+  if (!battle.exists || !Array.isArray(members) ||
+      !members.includes(userId) || battle.data()!.active !== true) {
+    return {scored: false};
+  }
+  await ensureBattleWeek(battle.ref);
+  const currentWeek = weekKey(battle.data()!.timezone);
+  const weekStart = DateTime.fromISO(currentWeek,
+    {zone: battle.data()!.timezone}).toMillis();
+  const activatedAt =
+    (battle.data()!.activatedAt as Timestamp | undefined)?.toMillis() ?? weekStart;
+  if (data.resolvedAt < Math.max(weekStart, activatedAt) ||
+      data.resolvedAt > Date.now() + 300000) {
+    throw new HttpsError('failed-precondition',
+      'Outcome is outside the active battle week.');
+  }
+
+  const scoreRef = battle.ref.collection('scores').doc(userId);
+  const eventRef = battle.ref.collection('events')
+    .doc(`${currentWeek}_${userId}_${data.eventId}`);
+  return db.runTransaction(async (tx) => {
+    const prior = await tx.get(eventRef);
+    if (prior.exists) return {scored: true, duplicate: true};
+    const score = await tx.get(scoreRef);
+    const next = nextBattleScore(score.data(), data.outcome, data.snoozes);
+    tx.create(eventRef, {
+      uid: userId,
+      eventId: data.eventId,
+      outcome: data.outcome,
+      snoozes: data.snoozes,
+      resolvedAt: data.resolvedAt,
+      weekKey: currentWeek,
+      createdAt: FieldValue.serverTimestamp(),
+      // Idempotency is only needed across the current/previous battle week.
+      expiresAt: Timestamp.fromMillis(Date.now() + 14 * dayMs),
+    });
+    tx.set(scoreRef, {...next, mascot: data.mascot,
+      updatedAt: FieldValue.serverTimestamp()}, {merge: true});
+    return {scored: true, score: next.score};
+  });
+});
+
+export const deleteSocialAccount = onCall(socialCall, async (req) => {
+  const userId = uid(req);
+  requireRecentGoogleAuth(req);
+  await rateLimit(userId, 'deleteAccount', 2);
+  const membershipRef = db.doc(`battleMemberships/${userId}`);
+  const membership = await membershipRef.get();
+  if (membership.exists) {
+    const battleRef = db.doc(`battles/${membership.data()!.battleId}`);
+    const deleted = await db.runTransaction(async (tx) => {
+      const battle = await tx.get(battleRef);
+      const data = battle.data();
+      if (!data) {
+        tx.delete(membershipRef);
+        return false;
+      }
+      const members = (data.memberUids as string[])
+        .filter((item) => item !== userId);
+      if (members.length === 0) tx.delete(battleRef);
+      else {
+        tx.update(battleRef, {
+          memberUids: members,
+          creatorUid: data.creatorUid === userId ? members[0] : data.creatorUid,
+          active: members.length >= 2,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      tx.delete(battleRef.collection('scores').doc(userId));
+      tx.delete(membershipRef);
+      return members.length === 0;
+    });
+    if (deleted) await db.recursiveDelete(battleRef);
+    else {
+      const events = await battleRef.collection('events')
+        .where('uid', '==', userId).limit(1000).get();
+      const batch = db.batch();
+      for (const event of events.docs) batch.delete(event.ref);
+      if (!events.empty) await batch.commit();
+    }
+  }
+
+  const invites = await db.collection('battleInvites')
+    .where('inviterUid', '==', userId).limit(100).get();
+  const cleanup = db.batch();
+  for (const invite of invites.docs) cleanup.delete(invite.ref);
+  for (const action of [
+    'createBattle', 'invite', 'join', 'leave', 'outcome', 'deleteAccount',
+  ]) {
+    cleanup.delete(db.doc(`rateLimits/${userId}_${action}`));
+  }
+  cleanup.delete(db.doc(`socialUsers/${userId}`));
+  await cleanup.commit();
+  await getAuth().deleteUser(userId);
+  return {ok: true};
+});

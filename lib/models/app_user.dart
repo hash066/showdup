@@ -37,7 +37,6 @@ class AppUser {
     required this.timezone,
     this.handle,
     this.photoUrl,
-    this.oneSignalId,
     this.isPro = false,
     this.proExpiresAt,
     this.stats = const UserStats(),
@@ -48,9 +47,9 @@ class AppUser {
   final String timezone;
   final String? handle;
   final String? photoUrl;
-  final String? oneSignalId;
 
-  /// WEBHOOK ONLY. Never write from the client.
+  /// Derived from the verified RevenueCat entitlement in local-first mode.
+  /// It is never accepted from commitment/profile form input.
   final bool isPro;
   final DateTime? proExpiresAt;
   final UserStats stats;
@@ -63,7 +62,6 @@ class AppUser {
     'timezone': timezone,
     if (handle != null) 'handle': handle,
     if (photoUrl != null) 'photoUrl': photoUrl,
-    if (oneSignalId != null) 'oneSignalId': oneSignalId,
   };
 
   factory AppUser.fromJson(String uid, Map<String, dynamic> j) => AppUser(
@@ -72,7 +70,6 @@ class AppUser {
     timezone: j['timezone'] as String? ?? 'Asia/Kolkata',
     handle: j['handle'] as String?,
     photoUrl: j['photoUrl'] as String?,
-    oneSignalId: j['oneSignalId'] as String?,
     isPro: j['isPro'] as bool? ?? false,
     stats: UserStats.fromJson(
       Map<String, dynamic>.from(j['stats'] as Map? ?? {}),

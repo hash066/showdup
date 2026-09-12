@@ -18,7 +18,7 @@ import '../models/commitment.dart';
     ).toUtc();
   }
 
-  return (start: at(s.windowStartLocal), end: at(s.windowEndLocal));
+  return (start: at(s.startFor(day.weekday)), end: at(s.endFor(day.weekday)));
 }
 
 DateTime nextWindow(CommitmentSchedule s, DateTime now) {

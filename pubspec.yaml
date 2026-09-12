@@ -37,17 +37,18 @@ dependencies:
   flutter_riverpod: ^2.6.1
   firebase_core: ^4.14.0
   firebase_auth: ^6.6.1
+  firebase_app_check: ^0.4.7
   cloud_firestore: ^6.9.0
   cloud_functions: ^6.4.0
-  purchases_flutter: ^10.11.0
-  purchases_ui_flutter: ^10.11.0
-  onesignal_flutter: ^5.6.8
+  purchases_flutter: ^10.12.0
+  purchases_ui_flutter: ^10.12.0
   shared_preferences: ^2.5.5
   intl: ^0.20.3
   timezone: ^0.11.1
   share_plus: ^13.3.0
   path_provider: ^2.1.6
   flutter_timezone: ^5.1.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

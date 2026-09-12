@@ -1,6 +1,73 @@
-import {DateTime} from 'luxon';
-import {CommitmentSchedule,UserStats,AttemptState} from './types';
-export function resolveWindow(s:CommitmentSchedule,date:string){const start=DateTime.fromISO(`${date}T${s.windowStartLocal}`,{zone:s.timezone}),end=DateTime.fromISO(`${date}T${s.windowEndLocal}`,{zone:s.timezone});if(!start.isValid||!end.isValid||end<=start)throw new Error('Invalid window');return {start:start.toMillis(),end:end.toMillis(),weekday:start.weekday};}
-export const emptyStats:UserStats={currentStreak:0,longestStreak:0,completed:0,abandoned:0,unverifiable:0};
-export function nextStats(current:Partial<UserStats>|undefined,state:AttemptState):UserStats{const s={...emptyStats,...current};if(state==='completed'){s.completed++;s.currentStreak++;s.longestStreak=Math.max(s.longestStreak,s.currentStreak);}if(state==='abandoned'){s.abandoned++;s.currentStreak=0;}if(state==='expired')s.currentStreak=0;if(state==='unverifiable')s.unverifiable++;return s;}
-export function evidenceWindow(now:number,start:number,end:number,elapsed:number){return now>=start&&now<=end&&Number.isFinite(elapsed)&&elapsed>=0&&elapsed<=now-start+5000;}
+export type BattleOutcome =
+  | 'completed'
+  | 'expired'
+  | 'abandoned'
+  | 'unverifiable';
+
+export type ServerPetMood =
+  | 'happy'
+  | 'uneasy'
+  | 'sad'
+  | 'cracked'
+  | 'recovery';
+
+export type BattleScoreState = {
+  earned: number;
+  eligibleAttempts: number;
+  penalties: number;
+  consecutiveMisses: number;
+  cracked: boolean;
+  petMood: ServerPetMood;
+  score: number;
+};
+
+/** Calculates rankings and pet state from server-held history. */
+export function nextBattleScore(
+  current: Partial<BattleScoreState> | undefined,
+  outcome: BattleOutcome,
+  snoozes: number,
+): BattleScoreState {
+  const eligible = outcome !== 'unverifiable';
+  const completed = outcome === 'completed';
+  const missed = outcome === 'expired' || outcome === 'abandoned';
+  const points = completed ? Math.max(60, 100 - Math.max(0, snoozes) * 5) : 0;
+  const earned = Number(current?.earned ?? 0) + (eligible ? points : 0);
+  const eligibleAttempts = Number(current?.eligibleAttempts ?? 0) +
+    (eligible ? 1 : 0);
+  let penalties = Number(current?.penalties ?? 0);
+  let consecutiveMisses = Number(current?.consecutiveMisses ?? 0);
+  let cracked = current?.cracked === true;
+  let petMood: ServerPetMood = current?.petMood ?? 'happy';
+
+  if (completed) {
+    petMood = cracked ? 'recovery' : snoozes >= 2 ? 'sad' : snoozes === 1 ? 'uneasy' : 'happy';
+    consecutiveMisses = 0;
+    cracked = false;
+  } else if (missed) {
+    consecutiveMisses += 1;
+    if (consecutiveMisses >= 3 && !cracked) {
+      penalties += 100;
+      cracked = true;
+    }
+    petMood = cracked ? 'cracked' : 'sad';
+  }
+
+  const score = eligibleAttempts === 0
+    ? 0
+    : Math.max(
+        0,
+        Math.min(
+          1000,
+          Math.round(earned / (eligibleAttempts * 100) * 1000) - penalties,
+        ),
+      );
+  return {
+    earned,
+    eligibleAttempts,
+    penalties,
+    consecutiveMisses,
+    cracked,
+    petMood,
+    score,
+  };
+}

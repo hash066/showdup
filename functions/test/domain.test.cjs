@@ -1,15 +1,47 @@
-const {test}=require('node:test');
-const assert=require('node:assert/strict');
-const {resolveWindow,nextStats,evidenceWindow}=require('../lib/domain');
-const {commitmentSchema,checkStepsPlausibility,checkLocationPlausibility}=require('../lib/validation');
-const schedule={daysOfWeek:[1,2,3,4,5],windowStartLocal:'06:30',windowEndLocal:'09:00',timezone:'Asia/Kolkata'};
-const config={targetSteps:1000,minDurationMs:60000};
-test('Kolkata 06:30 resolves to 01:00 UTC independent of device timezone',()=>assert.equal(new Date(resolveWindow(schedule,'2026-09-08').start).toISOString(),'2026-09-08T01:00:00.000Z'));
-test('DST preserves local schedule',()=>assert.equal(new Date(resolveWindow({...schedule,timezone:'America/New_York'},'2026-07-01').start).toISOString(),'2026-07-01T10:30:00.000Z'));
-test('unverifiable preserves streak and awards nothing',()=>{const s=nextStats({currentStreak:7,completed:10},'unverifiable');assert.equal(s.currentStreak,7);assert.equal(s.completed,10);assert.equal(s.unverifiable,1)});
-test('expired and abandoned break streak, completed increments',()=>{assert.equal(nextStats({currentStreak:7},'expired').currentStreak,0);assert.equal(nextStats({currentStreak:7},'abandoned').currentStreak,0);assert.equal(nextStats({currentStreak:7},'completed').longestStreak,8)});
-test('step evidence rejects short duration, superhuman pace, NaN and below target',()=>{for(const [stepsSinceBaseline,elapsedMs]of [[5000,30000],[3000,600000],[999,600000],[NaN,600000],[50001,36000000]])assert.ok(checkStepsPlausibility({stepsSinceBaseline,elapsedMs,config}));assert.equal(checkStepsPlausibility({stepsSinceBaseline:1000,elapsedMs:600000,config}),null)});
-test('duration cannot predate attempt window',()=>{assert.equal(evidenceWindow(1000000,900000,1100000,600000),false);assert.equal(evidenceWindow(1000000,900000,1100000,60000),true);assert.equal(evidenceWindow(1200000,900000,1100000,60000),false)});
-const fix={lat:19.07,lng:72.87,accuracyM:20,isMock:false,dwellMs:300000,epochMs:1000000,previousFix:{lat:19.07,lng:72.87,epochMs:940000},config:{lat:19.07,lng:72.87,radiusM:150,dwellMs:300000}};
-test('location needs real accurate arrival plus dwell',()=>{assert.equal(checkLocationPlausibility(fix),null);for(const patch of [{isMock:true},{accuracyM:151},{dwellMs:0},{previousFix:undefined},{lat:20},{previousFix:{lat:0,lng:0,epochMs:999999}},{lat:NaN}])assert.ok(checkLocationPlausibility({...fix,...patch}))});
-test('commitment validates strict schemas, timezone, schedule and deferred blocking',()=>{const good={title:'Walk',verifierType:'steps',verifierConfig:config,schedule,reminder:{intervalMinutes:20,volumeMode:'gentle',maxReminders:6},restrictions:{enabled:false,packages:[]}};assert.equal(commitmentSchema.safeParse(good).success,true);for(const patch of [{title:''},{ownerUid:'attacker'},{verifierConfig:{targetSteps:1,minDurationMs:60000}},{schedule:{...schedule,timezone:'Nowhere/Invalid'}},{schedule:{...schedule,windowEndLocal:'06:31'}},{restrictions:{enabled:true,packages:['a']}}])assert.equal(commitmentSchema.safeParse({...good,...patch}).success,false)});
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const {nextBattleScore} = require('../lib/domain');
+
+test('score normalizes, floors snoozed completion and excludes unverifiable', () => {
+  let score = nextBattleScore(undefined, 'completed', 3);
+  assert.deepEqual(score, {
+    earned: 85,
+    eligibleAttempts: 1,
+    penalties: 0,
+    consecutiveMisses: 0,
+    cracked: false,
+    petMood: 'sad',
+    score: 850,
+  });
+  score = nextBattleScore(score, 'unverifiable', 0);
+  assert.equal(score.eligibleAttempts, 1);
+  assert.equal(score.score, 850);
+  assert.equal(score.consecutiveMisses, 0);
+});
+
+test('three genuine misses burst once and completion recovers the pet', () => {
+  let score = nextBattleScore(undefined, 'expired', 0);
+  assert.equal(score.consecutiveMisses, 1);
+  assert.equal(score.penalties, 0);
+  score = nextBattleScore(score, 'abandoned', 0);
+  assert.equal(score.consecutiveMisses, 2);
+  score = nextBattleScore(score, 'expired', 0);
+  assert.equal(score.cracked, true);
+  assert.equal(score.petMood, 'cracked');
+  assert.equal(score.penalties, 100);
+  score = nextBattleScore(score, 'expired', 0);
+  assert.equal(score.penalties, 100, 'a cracked pet cannot burst repeatedly');
+  score = nextBattleScore(score, 'completed', 0);
+  assert.equal(score.cracked, false);
+  assert.equal(score.consecutiveMisses, 0);
+  assert.equal(score.petMood, 'recovery');
+  assert.equal(score.penalties, 100);
+});
+
+test('unverifiable outcomes cannot advance a burst', () => {
+  const missed = nextBattleScore(undefined, 'expired', 0);
+  const ignored = nextBattleScore(missed, 'unverifiable', 0);
+  assert.equal(ignored.consecutiveMisses, 1);
+  assert.equal(ignored.penalties, 0);
+  assert.equal(ignored.eligibleAttempts, 1);
+});

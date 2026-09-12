@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'core/config.dart';
@@ -38,12 +39,15 @@ Future<void> main() async {
           5001,
         );
       }
-    } catch (e) {
-      startupError = e.toString();
+      await FirebaseAppCheck.instance.activate(
+        providerAndroid: kDebugMode || AppConfig.useEmulators
+            ? const AndroidDebugProvider()
+            : const AndroidPlayIntegrityProvider(),
+      );
+    } catch (_) {
+      startupError =
+          'Optional Firebase backup is unavailable. On-device commitments, reminders, and verification still work.';
     }
-  }
-  if (AppConfig.oneSignalId.isNotEmpty) {
-    OneSignal.initialize(AppConfig.oneSignalId);
   }
   final prefs = await SharedPreferences.getInstance();
   runApp(

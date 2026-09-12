@@ -65,6 +65,8 @@ class StepsChannel {
       await _m.invokeMethod<bool>('stopTracking', {'attemptId': attemptId}) ??
       false;
 
-  static final Stream<StepEvent> _stream = _e.receiveBroadcastStream().map((e) => StepEvent.fromMap(e as Map));
+  static final Stream<StepEvent> _stream = _e.receiveBroadcastStream().map(
+    (e) => StepEvent.fromMap(e as Map),
+  );
   static Stream<StepEvent> events() => _stream;
 }

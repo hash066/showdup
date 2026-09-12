@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/theme.dart';
 import '../core/config.dart';
 import '../core/scheduling.dart';
@@ -14,8 +15,10 @@ import '../models/commitment.dart';
 import '../models/enums.dart';
 import '../models/verifier_config.dart';
 import '../platform/alarm_channel.dart';
+import '../platform/overlay_channel.dart';
 import '../services/billing.dart';
 import '../services/controller.dart';
+import '../services/social_service.dart';
 import 'app.dart';
 import 'widgets.dart';
 import 'wizard.dart';
@@ -70,13 +73,30 @@ class TodayScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final app = ref.watch(appProvider), now = DateTime.now();
-    final today = app.attempts
-        .where(
-          (a) =>
-              a.windowEndAt.isAfter(now.subtract(const Duration(hours: 6))) &&
-              a.windowStartAt.isBefore(now.add(const Duration(hours: 24))),
-        )
-        .toList();
+    final today =
+        app.attempts
+            .where(
+              (a) =>
+                  a.windowEndAt.isAfter(
+                    now.subtract(const Duration(hours: 6)),
+                  ) &&
+                  a.windowStartAt.isBefore(now.add(const Duration(hours: 24))),
+            )
+            .toList()
+          ..sort((left, right) {
+            int rank(Attempt attempt) {
+              if (attempt.state == AttemptState.pending &&
+                  attempt.isWindowOpen) {
+                return 0;
+              }
+              if (attempt.state == AttemptState.pending) return 1;
+              return 2;
+            }
+
+            final byRank = rank(left).compareTo(rank(right));
+            if (byRank != 0) return byRank;
+            return left.windowStartAt.compareTo(right.windowStartAt);
+          });
     final active = app.commitments
         .where((c) => c.status == CommitmentStatus.active)
         .toList();
@@ -399,7 +419,9 @@ class CommitmentsScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal}  ·  ${_days(c.schedule.daysOfWeek)}',
+                  c.schedule.hasCustomWindows
+                      ? 'Custom times by day  ·  ${_days(c.schedule.daysOfWeek)}'
+                      : '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal}  ·  ${_days(c.schedule.daysOfWeek)}',
                   style: const TextStyle(fontSize: 12),
                 ),
                 const SizedBox(height: 6),
@@ -544,6 +566,31 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final cutoff = DateTime.now().subtract(const Duration(days: 7));
+    final terminal = app.attempts.where((a) => a.state.isTerminal).toList();
+    final completed = terminal
+        .where((a) => a.state == AttemptState.completed)
+        .toList();
+    final completionRate = terminal.isEmpty
+        ? 0
+        : (completed.length * 100 / terminal.length).round();
+    final averageReminders = completed.isEmpty
+        ? 0.0
+        : completed.fold<int>(0, (sum, a) => sum + a.remindersFired) /
+              completed.length;
+    final completionsByWeekday = <int, int>{};
+    for (final attempt in completed) {
+      completionsByWeekday.update(
+        attempt.windowStartAt.weekday,
+        (value) => value + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final bestWeekday = completionsByWeekday.entries.isEmpty
+        ? null
+        : (completionsByWeekday.entries.toList()
+                ..sort((a, b) => b.value.compareTo(a.value)))
+              .first
+              .key;
     final visible = app.attempts
         .where(
           (a) =>
@@ -565,9 +612,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: List.generate(7, (i) {
                   final date = DateTime.now().subtract(Duration(days: 6 - i));
-                  final key = DateFormat('yyyy-MM-dd').format(date);
                   final done = app.attempts.any(
-                    (a) => a.date == key && a.state == AttemptState.completed,
+                    (a) =>
+                        DateUtils.isSameDay(a.windowStartAt, date) &&
+                        a.state == AttemptState.completed,
                   );
                   return Column(
                     children: [
@@ -604,6 +652,41 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
           ),
         ),
         const SizedBox(height: 22),
+        if (app.user?.isPro == true && terminal.isNotEmpty) ...[
+          Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Eyebrow('Your patterns'),
+                const SizedBox(height: 16),
+                _patternRow('Completion rate', '$completionRate%'),
+                _patternRow(
+                  'Reminders before completion',
+                  averageReminders.toStringAsFixed(1),
+                ),
+                if (bestWeekday != null)
+                  _patternRow(
+                    'Most completions',
+                    DateFormat(
+                      'EEEE',
+                    ).format(DateTime(2026, 9, 7 + bestWeekday - 1)),
+                  ),
+                const SizedBox(height: 4),
+                OutlinedButton.icon(
+                  onPressed: () => _shareBuddySummary(app),
+                  icon: const Icon(Icons.people_outline),
+                  label: const Text('Share a buddy check-in'),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'You choose who receives it through Android’s share sheet. ShowdUp does not upload a buddy list.',
+                  style: TextStyle(color: T.muted, fontSize: 11, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 22),
+        ],
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -647,10 +730,41 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               context,
               MaterialPageRoute<void>(builder: (_) => const ProScreen()),
             ),
-            child: const Text('Keep your full history with Pro  →'),
+            child: const Text('Unlock two years of history with Pro  →'),
           ),
         ],
       ],
+    );
+  }
+
+  Widget _patternRow(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(label, style: const TextStyle(color: T.muted)),
+        ),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+      ],
+    ),
+  );
+
+  Future<void> _shareBuddySummary(AppController app) async {
+    final since = DateTime.now().subtract(const Duration(days: 7));
+    final recent = app.attempts
+        .where((attempt) => attempt.state.isTerminal)
+        .where((attempt) => attempt.windowEndAt.isAfter(since))
+        .toList();
+    final completed = recent
+        .where((attempt) => attempt.state == AttemptState.completed)
+        .length;
+    final opportunities = recent.length;
+    final streak = app.user?.stats.currentStreak ?? 0;
+    await SharePlus.instance.share(
+      ShareParams(
+        text:
+            'My ShowdUp buddy check-in: $completed of $opportunities commitments completed in the last 7 days. Current streak: $streak. Keep me honest next week. #ShowdUp',
+      ),
     );
   }
 }
@@ -1091,13 +1205,19 @@ class ProScreen extends ConsumerStatefulWidget {
 class _ProScreenState extends ConsumerState<ProScreen> {
   bool busy = false;
   String? message;
-  Future<void> run(Future<void> Function() action) async {
+  Future<void> run(Future<BillingResult> Function() action) async {
     setState(() => busy = true);
     try {
-      await action();
+      final result = await action();
       setState(
-        () => message =
-            'Purchase information refreshed. Entitlements update after server confirmation.',
+        () => message = switch (result) {
+          BillingResult.purchased => 'Pro is now active on this device.',
+          BillingResult.restored when Billing.isPro =>
+            'Your Pro purchase has been restored.',
+          BillingResult.restored =>
+            'No active Pro purchase was found for this Google Play account.',
+          BillingResult.cancelled => 'No changes were made.',
+        },
       );
     } catch (e) {
       setState(() => message = friendlyError(e));
@@ -1133,12 +1253,20 @@ class _ProScreenState extends ConsumerState<ProScreen> {
           const SizedBox(height: 28),
           for (final entry in [
             (
-              'Multiple commitments',
-              'A separate schedule for each part of your day.',
+              'Unlock after completion',
+              'Selected distracting apps stay covered during the commitment window until evidence completes it or you end today.',
             ),
             (
-              'Your full history',
-              'Keep every attempt, beyond the free seven days.',
+              'Advanced weekly schedules',
+              'Use multiple commitments and set a different time window for each weekday.',
+            ),
+            (
+              'Two years of history',
+              'Review up to two years of attempts, beyond the free seven days.',
+            ),
+            (
+              'Buddy check-ins',
+              'Share a seven-day progress summary with someone you trust.',
             ),
             (
               'The same trusted verification',
@@ -1179,7 +1307,7 @@ class _ProScreenState extends ConsumerState<ProScreen> {
           ],
           const SizedBox(height: 12),
           const Text(
-            'App blocking is planned for a later release and is not included in this version.',
+            'You choose which apps are restricted. ShowdUp, Android Settings, calling, and emergency tools always remain available.',
             style: TextStyle(color: T.muted, fontSize: 12, height: 1.6),
           ),
           const SizedBox(height: 24),
@@ -1201,7 +1329,7 @@ class _ProScreenState extends ConsumerState<ProScreen> {
             child: const Text('Restore purchases'),
           ),
           const Text(
-            'Prices and renewal periods are shown before purchase. Subscriptions renew automatically unless canceled in Google Play. Deleting your account does not cancel a subscription.',
+            'Prices and renewal periods are shown before purchase. Subscriptions renew automatically unless canceled in Google Play. Removing this app or its data does not cancel a subscription.',
             textAlign: TextAlign.center,
             style: TextStyle(color: T.muted, fontSize: 11, height: 1.6),
           ),
@@ -1271,9 +1399,39 @@ class SettingsScreen extends ConsumerWidget {
         ),
         _tile(
           context,
+          Icons.picture_in_picture_alt_outlined,
+          'Pet overlay',
+          'Optional pet and stats over other apps',
+          () async {
+            try {
+              final status = await OverlayChannel.status();
+              if (!status.permissionGranted) {
+                await OverlayChannel.requestPermission();
+                return;
+              }
+              if (status.enabled) {
+                await OverlayChannel.disable();
+              } else {
+                await OverlayChannel.enable();
+              }
+              if (context.mounted) {
+                showMessage(
+                  context,
+                  status.enabled
+                      ? 'Pet overlay turned off.'
+                      : 'Pet overlay enabled.',
+                );
+              }
+            } catch (e) {
+              if (context.mounted) showMessage(context, friendlyError(e));
+            }
+          },
+        ),
+        _tile(
+          context,
           Icons.auto_awesome_outlined,
           'Explore Pro',
-          'More commitments and full history',
+          'More commitments and two years of history',
           () => Navigator.push(
             context,
             MaterialPageRoute<void>(builder: (_) => const ProScreen()),
@@ -1298,34 +1456,36 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 24),
-        OutlinedButton(
-          onPressed: onLogout,
-          child: Text(app.preview ? 'Leave preview' : 'Sign out'),
-        ),
+        if (app.preview)
+          OutlinedButton(
+            onPressed: onLogout,
+            child: const Text('Leave preview'),
+          ),
         if (!app.preview)
           TextButton(
             onPressed: () async {
               final accepted = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  title: const Text('Delete your account?'),
+                  title: const Text('Delete local data?'),
                   content: const Text(
-                    'This permanently deletes your commitments and history. Cancel any subscription in Google Play separately.',
+                    'This permanently deletes commitments and history stored on this device. Your RevenueCat/Google Play subscription is separate and must be canceled in Google Play.',
                   ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, false),
-                      child: const Text('Keep account'),
+                      child: const Text('Keep data'),
                     ),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Delete account'),
+                      child: const Text('Delete local data'),
                     ),
                   ],
                 ),
               );
               if (accepted == true) {
                 try {
+                  await SocialService.instance.deleteAccount();
                   await app.repository.call('deleteAccount', {});
                   await onLogout();
                 } catch (e) {
@@ -1334,7 +1494,7 @@ class SettingsScreen extends ConsumerWidget {
               }
             },
             child: const Text(
-              'Delete account',
+              'Delete local data',
               style: TextStyle(color: T.danger),
             ),
           ),
@@ -1349,7 +1509,7 @@ class SettingsScreen extends ConsumerWidget {
           const Padding(
             padding: EdgeInsets.only(top: 12),
             child: Text(
-              'Firebase, payments and push are not connected in this preview build.',
+              'Preview uses sample data and does not make purchases or run live verification.',
               textAlign: TextAlign.center,
               style: TextStyle(color: T.muted, fontSize: 11),
             ),
@@ -1393,23 +1553,31 @@ class PrivacyScreen extends StatelessWidget {
         for (final section in [
           (
             'Your data',
-            'Your account stores your name, email, timezone, commitments and attempts. Firebase hosts account and verification data. RevenueCat handles subscription status, and OneSignal handles optional push notifications.',
+            'Commitments, attempt history, reminders and verification evidence stay on this device. If you use Battles, Firebase receives your chosen display identity, mascot, battle membership and aggregated outcome, snooze, score and pet-state events. Commitment titles, step readings, coordinates and verification evidence are not uploaded for Battles. RevenueCat receives an anonymous app-user identifier and subscription status.',
           ),
           (
             'Steps',
-            'The hardware step counter records movement. We send the number of new steps, elapsed duration and baseline time for a plausibility check. This does not prove a workout and is not tamper-proof.',
+            'The hardware step counter records movement. ShowdUp stores the number of new steps, elapsed duration and baseline time on this device. This proves recorded movement, not a workout, and is not tamper-proof.',
           ),
           (
             'Location',
-            'Location verification starts when you open the app. A foreground service checks arrival and continuous dwell. It sends completion evidence with coordinates, accuracy and recent fixes. We do not request background location permission.',
+            'Location verification starts when you open the app. A foreground service checks arrival and continuous dwell and stores completion evidence, including coordinates and accuracy, on this device. ShowdUp does not request background location permission.',
+          ),
+          (
+            'Selected-app restrictions',
+            'Pro users can optionally enable Android Accessibility access to detect when a selected app opens during an active commitment. ShowdUp uses window-change events only to identify the foreground app and show a blocking screen. It does not read screen content, typed text, notifications or passwords. ShowdUp, Android Settings, permission controls, the default dialer and recognized emergency packages are excluded; device makers may provide other safety apps, so review your selected-app list carefully. You can disable the service at any time in Android Accessibility settings.',
+          ),
+          (
+            'Pet overlay',
+            'The optional “Display over other apps” permission shows your pet, score and accountability controls over other apps. A persistent notification identifies ShowdUp while it runs. The overlay does not read or capture content from the app underneath it and can be disabled from the overlay, notification or ShowdUp settings.',
           ),
           (
             'Your controls',
-            'End an attempt at any time without earning completion. Revoke permissions in Android settings. Delete your account from Settings to remove your commitments and attempt history.',
+            'End an attempt at any time without earning completion. Revoke permissions in Android settings. Delete local data from Settings to remove commitments and attempt history from this device.',
           ),
           (
             'Subscriptions',
-            'Payments and renewal terms are displayed by Google Play. Manage or cancel subscriptions in Google Play. Account deletion does not cancel billing.',
+            'Payments and renewal terms are displayed by Google Play. Manage or cancel subscriptions in Google Play. Deleting local data or uninstalling ShowdUp does not cancel billing.',
           ),
           (
             'Permission failures',
@@ -1427,6 +1595,20 @@ class PrivacyScreen extends StatelessWidget {
           ),
           const SizedBox(height: 26),
         ],
+        if (AppConfig.privacyPolicyUrl.isNotEmpty)
+          OutlinedButton.icon(
+            onPressed: () async {
+              final opened = await launchUrl(
+                Uri.parse(AppConfig.privacyPolicyUrl),
+                mode: LaunchMode.externalApplication,
+              );
+              if (!opened && context.mounted) {
+                showMessage(context, 'Could not open the privacy policy.');
+              }
+            },
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Open the full privacy policy'),
+          ),
       ],
     ),
   );

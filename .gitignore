@@ -2,6 +2,8 @@
 *.class
 *.log
 config.json
+config.release.json
+config.sandbox.json
 android/key.properties
 *.jks
 *.keystore
@@ -9,6 +11,8 @@ functions/node_modules/
 functions/lib/
 functions/.secret.local
 .firebase/
+.tmp/
+android/.kotlin/
 artifacts/
 *.pyc
 *.swp

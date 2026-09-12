@@ -1,5 +1,23 @@
 import 'enums.dart';
 import 'verifier_config.dart';
+import 'package:timezone/timezone.dart' as tz;
+
+class DailyWindow {
+  const DailyWindow({required this.startLocal, required this.endLocal});
+
+  final String startLocal;
+  final String endLocal;
+
+  Map<String, dynamic> toJson() => {
+    'startLocal': startLocal,
+    'endLocal': endLocal,
+  };
+
+  factory DailyWindow.fromJson(Map<String, dynamic> json) => DailyWindow(
+    startLocal: json['startLocal'] as String,
+    endLocal: json['endLocal'] as String,
+  );
+}
 
 class CommitmentSchedule {
   const CommitmentSchedule({
@@ -7,6 +25,7 @@ class CommitmentSchedule {
     required this.windowStartLocal,
     required this.windowEndLocal,
     required this.timezone,
+    this.dayWindows = const {},
   });
 
   /// ISO weekdays, 1 = Monday .. 7 = Sunday.
@@ -14,14 +33,34 @@ class CommitmentSchedule {
   final String windowStartLocal; // "06:30"
   final String windowEndLocal; // "09:00"
   final String timezone; // IANA, e.g. "Asia/Kolkata"
+  /// Optional Pro overrides keyed by ISO weekday. Missing days use the
+  /// default window, which keeps existing saved schedules compatible.
+  final Map<int, DailyWindow> dayWindows;
+
+  bool get hasCustomWindows => dayWindows.isNotEmpty;
+  String startFor(int weekday) =>
+      dayWindows[weekday]?.startLocal ?? windowStartLocal;
+  String endFor(int weekday) => dayWindows[weekday]?.endLocal ?? windowEndLocal;
 
   String? validate() {
     if (daysOfWeek.isEmpty) return 'Pick at least one day.';
     if (daysOfWeek.any((d) => d < 1 || d > 7)) return 'Invalid weekday.';
-    final s = _mins(windowStartLocal), e = _mins(windowEndLocal);
-    if (s == null || e == null) return 'Times must be HH:mm.';
-    if (e <= s) return 'Window must end after it starts.';
-    if (e - s < 15) return 'Window must be at least 15 minutes.';
+    final baseError = _validateWindow(windowStartLocal, windowEndLocal);
+    if (baseError != null) return baseError;
+    if (dayWindows.keys.any((day) => !daysOfWeek.contains(day))) {
+      return 'Custom times may only be set for selected days.';
+    }
+    for (final day in daysOfWeek) {
+      final custom = dayWindows[day];
+      if (custom == null) continue;
+      final error = _validateWindow(custom.startLocal, custom.endLocal);
+      if (error != null) return 'Day $day: $error';
+    }
+    try {
+      tz.getLocation(timezone);
+    } catch (_) {
+      return 'Use a valid IANA timezone, such as Asia/Kolkata.';
+    }
     return null;
   }
 
@@ -35,20 +74,47 @@ class CommitmentSchedule {
     return h * 60 + m;
   }
 
+  static String? _validateWindow(String start, String end) {
+    final s = _mins(start), e = _mins(end);
+    if (s == null || e == null) return 'Times must be HH:mm.';
+    if (e <= s) return 'Window must end after it starts.';
+    if (e - s < 15) return 'Window must be at least 15 minutes.';
+    return null;
+  }
+
   Map<String, dynamic> toJson() => {
     'daysOfWeek': daysOfWeek,
     'windowStartLocal': windowStartLocal,
     'windowEndLocal': windowEndLocal,
     'timezone': timezone,
+    if (dayWindows.isNotEmpty)
+      'dayWindows': {
+        for (final entry in dayWindows.entries)
+          entry.key.toString(): entry.value.toJson(),
+      },
   };
 
-  factory CommitmentSchedule.fromJson(Map<String, dynamic> j) =>
-      CommitmentSchedule(
-        daysOfWeek: (j['daysOfWeek'] as List).map((e) => e as int).toList(),
-        windowStartLocal: j['windowStartLocal'] as String,
-        windowEndLocal: j['windowEndLocal'] as String,
-        timezone: j['timezone'] as String,
-      );
+  factory CommitmentSchedule.fromJson(Map<String, dynamic> j) {
+    final rawWindows = Map<String, dynamic>.from(
+      j['dayWindows'] as Map? ?? const {},
+    );
+    final parsedWindows = <int, DailyWindow>{};
+    for (final entry in rawWindows.entries) {
+      final day = int.tryParse(entry.key);
+      if (day != null) {
+        parsedWindows[day] = DailyWindow.fromJson(
+          Map<String, dynamic>.from(entry.value as Map),
+        );
+      }
+    }
+    return CommitmentSchedule(
+      daysOfWeek: (j['daysOfWeek'] as List).map((e) => e as int).toList(),
+      windowStartLocal: j['windowStartLocal'] as String,
+      windowEndLocal: j['windowEndLocal'] as String,
+      timezone: j['timezone'] as String,
+      dayWindows: parsedWindows,
+    );
+  }
 }
 
 class ReminderConfig {
@@ -66,8 +132,8 @@ class ReminderConfig {
     if (intervalMinutes < 5 || intervalMinutes > 120) {
       return 'Interval must be between 5 and 120 minutes.';
     }
-    if (maxReminders < 1 || maxReminders > 20) {
-      return 'Reminders must be between 1 and 20.';
+    if (maxReminders < 1 || maxReminders > 6) {
+      return 'Reminder pulses must be between 1 and 6.';
     }
     return null;
   }

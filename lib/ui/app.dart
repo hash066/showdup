@@ -2,18 +2,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
-import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../core/config.dart';
 import '../core/theme.dart';
 import '../services/billing.dart';
 import '../services/controller.dart';
 import '../services/repository.dart';
+import '../platform/alarm_channel.dart';
+import '../platform/blocker_channel.dart';
+import '../platform/overlay_channel.dart';
+import '../services/social_service.dart';
 import 'widgets.dart';
 import 'screens.dart';
+import 'battle_screen.dart';
 
 final appProvider = ChangeNotifierProvider<AppController>(
   (ref) => throw StateError('App session not initialized'),
@@ -30,56 +30,71 @@ class AppEntry extends StatefulWidget {
 class _AppEntryState extends State<AppEntry> {
   AppController? controller;
   bool entering = false;
+  bool billingListenersAttached = false;
   String? error;
   @override
   void initState() {
     super.initState();
-    if (AppConfig.configured &&
-        widget.startupError == null &&
-        FirebaseAuth.instance.currentUser != null) {
-      entering = true;
-      _live();
+    unawaited(_initializeBilling());
+  }
+
+  Future<void> _initializeBilling() async {
+    try {
+      await Billing.initialize(widget.prefs);
+      await _syncNativeEntitlement();
+    } catch (_) {
+      // A billing outage must never prevent local reminders or verification.
     }
   }
 
-  Future<void> _live() async {
+  Future<void> _startLocal() async {
+    if (entering || controller != null) return;
+    setState(() => entering = true);
+    final repository = LocalRepository(widget.prefs);
     try {
-      final user = FirebaseAuth.instance.currentUser!;
-      // A billing outage must never prevent free verification or signing in.
-      try { await Billing.identify(user.uid); } catch (_) {}
-      await const MethodChannel('app.showdup/alarm').invokeMethod('configureBackend', {'apiKey':AppConfig.apiKey,'appId':AppConfig.appId,'projectId':AppConfig.projectId,'senderId':AppConfig.senderId,'emulators':AppConfig.useEmulators,'host':AppConfig.emulatorHost});
-      final doc = FirebaseFirestore.instance.doc('users/${user.uid}');
-      final snap = await doc.get();
-      if (!snap.exists) {
-        String zone = 'Asia/Kolkata';
-        try {
-          zone = (await FlutterTimezone.getLocalTimezone()).identifier;
-        } catch (_) {}
-        await doc.set({
-          'displayName': user.displayName ?? '',
-          'timezone': zone,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-      if (AppConfig.oneSignalId.isNotEmpty) {
-        OneSignal.User.pushSubscription.addObserver((state) {
-          final id = state.current.id;
-          if (id != null) doc.set({'oneSignalId': id}, SetOptions(merge: true));
-        });
+      await _initializeBilling();
+      await repository.setPro(Billing.isPro);
+      if (!billingListenersAttached) {
+        Billing.entitlementRevision.addListener(_syncLocalEntitlement);
+        billingListenersAttached = true;
       }
       if (mounted) {
         setState(() {
-          controller = AppController(FirebaseRepository(user.uid));
+          controller = AppController(repository);
           entering = false;
         });
+        unawaited(SocialService.instance.ensureAnonymous());
+        unawaited(SocialService.instance.startWatching());
+      } else {
+        await repository.close();
       }
     } catch (e) {
+      await repository.close();
       if (mounted) {
         setState(() {
           entering = false;
           error = friendlyError(e);
         });
       }
+    }
+  }
+
+  Future<void> _syncLocalEntitlement() async {
+    final repository = controller?.repository;
+    if (repository is LocalRepository) {
+      await repository.setPro(Billing.isPro);
+    }
+    await _syncNativeEntitlement();
+  }
+
+  Future<void> _syncNativeEntitlement() async {
+    try {
+      await BlockerChannel.setEntitlement(
+        enabled: Billing.isPro,
+        expiresAtEpochMs: Billing.proExpiresAtEpochMs.value,
+      );
+    } on MissingPluginException {
+      // Non-Android tests and previews do not provide the blocker channel.
     }
   }
 
@@ -94,11 +109,19 @@ class _AppEntryState extends State<AppEntry> {
   }
 
   @override
+  void dispose() {
+    if (billingListenersAttached) {
+      Billing.entitlementRevision.removeListener(_syncLocalEntitlement);
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (controller != null) {
       return ProviderScope(
         overrides: [appProvider.overrideWith((ref) => controller!)],
-        child: _material(HomeShell(onLogout: logout)),
+        child: _material(HomeShell(onLogout: logout, prefs: widget.prefs)),
       );
     }
     if (entering) {
@@ -109,7 +132,7 @@ class _AppEntryState extends State<AppEntry> {
     return _material(
       WelcomeScreen(
         onPreview: preview,
-        onAuthenticated: _live,
+        onAuthenticated: _startLocal,
         error: widget.startupError ?? error,
       ),
     );
@@ -193,13 +216,7 @@ class WelcomeScreen extends StatelessWidget {
                 const SizedBox(height: 22),
                 if (error != null) ErrorNotice(error!),
                 FilledButton(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) =>
-                          AuthScreen(onAuthenticated: onAuthenticated),
-                    ),
-                  ),
+                  onPressed: onAuthenticated,
                   child: const Text(
                     'Make my first commitment  →',
                     style: TextStyle(fontWeight: FontWeight.w800),
@@ -228,192 +245,10 @@ class WelcomeScreen extends StatelessWidget {
   );
 }
 
-class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.onAuthenticated});
-  final Future<void> Function() onAuthenticated;
-  @override
-  State<AuthScreen> createState() => _AuthScreenState();
-}
-
-class _AuthScreenState extends State<AuthScreen> {
-  final email = TextEditingController(),
-      password = TextEditingController(),
-      name = TextEditingController();
-  final form = GlobalKey<FormState>();
-  bool signingIn = false, busy = false;
-  String? error;
-  @override
-  void dispose() {
-    email.dispose();
-    password.dispose();
-    name.dispose();
-    super.dispose();
-  }
-
-  Future<void> submit() async {
-    if (!form.currentState!.validate()) return;
-    if (!AppConfig.configured) {
-      setState(
-        () => error =
-            'This build is not connected to Firebase yet. You can explore every screen using local preview from the welcome screen.',
-      );
-      return;
-    }
-    setState(() {
-      busy = true;
-      error = null;
-    });
-    try {
-      if (signingIn) {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: email.text.trim(),
-          password: password.text,
-        );
-      } else {
-        final c = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: email.text.trim(),
-          password: password.text,
-        );
-        await c.user!.updateDisplayName(name.text.trim());
-      }
-      await widget.onAuthenticated();
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) setState(() => error = friendlyError(e));
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(),
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500),
-        child: ListView(
-          padding: const EdgeInsets.all(28),
-          children: [
-            const Brand(),
-            const SizedBox(height: 36),
-            Text(
-              signingIn ? 'Welcome back.' : 'A fresh start.',
-              style: const TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -1,
-              ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Your commitments, safely synced across devices.',
-              style: TextStyle(color: T.muted),
-            ),
-            const SizedBox(height: 28),
-            Form(
-              key: form,
-              child: Column(
-                children: [
-                  if (!signingIn) ...[
-                    TextFormField(
-                      controller: name,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: const InputDecoration(labelText: 'Your name'),
-                      validator: (v) =>
-                          v!.trim().isEmpty ? 'Enter your name' : null,
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                  TextFormField(
-                    controller: email,
-                    keyboardType: TextInputType.emailAddress,
-                    autofillHints: const [AutofillHints.email],
-                    decoration: const InputDecoration(
-                      labelText: 'Email address',
-                    ),
-                    validator: (v) =>
-                        !RegExp(
-                          r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                        ).hasMatch(v!.trim())
-                        ? 'Enter a valid email'
-                        : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: password,
-                    obscureText: true,
-                    autofillHints: const [AutofillHints.password],
-                    decoration: const InputDecoration(labelText: 'Password'),
-                    validator: (v) =>
-                        v!.length < 8 ? 'Use at least 8 characters' : null,
-                    onFieldSubmitted: (_) => submit(),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (error != null) ErrorNotice(error!),
-            FilledButton(
-              onPressed: busy ? null : submit,
-              child: Text(
-                busy
-                    ? 'Connecting…'
-                    : signingIn
-                    ? 'Sign in'
-                    : 'Create account',
-              ),
-            ),
-            TextButton(
-              onPressed: () => setState(() => signingIn = !signingIn),
-              child: Text(
-                signingIn
-                    ? 'New here? Create an account'
-                    : 'Already have an account? Sign in',
-              ),
-            ),
-            if (signingIn)
-              TextButton(
-                onPressed: busy
-                    ? null
-                    : () async {
-                        if (!AppConfig.configured) {
-                          setState(
-                            () => error =
-                                'Firebase is not configured in this build.',
-                          );
-                          return;
-                        }
-                        try {
-                          await FirebaseAuth.instance.sendPasswordResetEmail(
-                            email: email.text.trim(),
-                          );
-                          if (context.mounted) {
-                            showMessage(
-                              context,
-                              'If an account exists, a reset email is on its way.',
-                            );
-                          }
-                        } catch (e) {
-                          setState(() => error = friendlyError(e));
-                        }
-                      },
-                child: const Text('Forgot password?'),
-              ),
-            const SizedBox(height: 22),
-            const Text(
-              'You choose the volume, timing, and finish line. You can always end today without completing.',
-              style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
 class HomeShell extends ConsumerStatefulWidget {
-  const HomeShell({super.key, required this.onLogout});
+  const HomeShell({super.key, required this.onLogout, required this.prefs});
   final Future<void> Function() onLogout;
+  final SharedPreferences prefs;
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
 }
@@ -421,10 +256,19 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell>
     with WidgetsBindingObserver {
   int tab = 0;
+  bool _checkingLaunchAttempt = false;
+  String? _openingAttemptId;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_consumeLaunchAttempt());
+      unawaited(_consumeInviteLink());
+      unawaited(_enablePendingOverlay());
+      unawaited(_maybePromptGoogle());
+    });
   }
 
   @override
@@ -435,7 +279,139 @@ class _HomeShellState extends ConsumerState<HomeShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) ref.read(appProvider).refresh();
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshAfterResume());
+      unawaited(_consumeLaunchAttempt());
+      unawaited(_consumeInviteLink());
+      unawaited(_enablePendingOverlay());
+      unawaited(_maybePromptGoogle());
+    }
+  }
+
+  Future<void> _maybePromptGoogle() async {
+    if (!mounted || widget.prefs.getBool('social.googlePromptedAt3') == true) {
+      return;
+    }
+    final app = ref.read(appProvider);
+    final resolved = app.attempts
+        .where((attempt) => attempt.state.isTerminal)
+        .length;
+    if (resolved < 3 ||
+        !SocialService.instance.available ||
+        SocialService.instance.googleLinked) {
+      return;
+    }
+    await widget.prefs.setBool('social.googlePromptedAt3', true);
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Keep your battle identity?'),
+        content: const Text(
+          'Connect Google to invite friends and keep your weekly rank. Solo commitments stay on this phone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continue with Google'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      try {
+        await SocialService.instance.linkGoogle();
+      } catch (e) {
+        if (mounted) showMessage(context, friendlyError(e));
+      }
+    }
+  }
+
+  Future<void> _refreshAfterResume() async {
+    // The RevenueCat cache may have changed while Google Play was foregrounded
+    // (renewal, cancellation, or expiry). Its listener updates local and
+    // native entitlement state before the visible commitment data refreshes.
+    try {
+      await Billing.refresh();
+    } catch (_) {
+      // Never make the local product unusable because a billing refresh is
+      // temporarily offline. The last verified subscription expiry still
+      // fails closed in Billing/AppBlocker.
+    }
+    if (mounted) await ref.read(appProvider).refresh();
+  }
+
+  Future<void> _consumeLaunchAttempt() async {
+    if (_checkingLaunchAttempt) return;
+    _checkingLaunchAttempt = true;
+    try {
+      final attemptId = await AlarmChannel.getLaunchAttempt();
+      if (attemptId == null || attemptId.isEmpty) return;
+
+      // Local data may still be loading when Android delivers the intent.
+      // Wait briefly for the exact attempt rather than opening a stale route.
+      for (var retry = 0; retry != 15 && mounted; retry++) {
+        final exists = ref
+            .read(appProvider)
+            .attempts
+            .any((attempt) => attempt.id == attemptId);
+        if (exists) {
+          if (_openingAttemptId == attemptId) return;
+          if (!mounted) return;
+          _openingAttemptId = attemptId;
+          try {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => AttemptScreen(attemptId: attemptId),
+              ),
+            );
+          } finally {
+            _openingAttemptId = null;
+          }
+          return;
+        }
+        await ref.read(appProvider).refresh();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    } on MissingPluginException {
+      // Widget tests and non-Android platforms have no alarm channel.
+    } on PlatformException {
+      // The app remains usable if an older native build lacks this method.
+    } finally {
+      _checkingLaunchAttempt = false;
+    }
+  }
+
+  Future<void> _consumeInviteLink() async {
+    try {
+      final code = await const MethodChannel(
+        'app.showdup/social',
+      ).invokeMethod<String>('getLaunchInvite');
+      if (code != null && code.length == 6 && mounted) {
+        SocialService.instance.pendingInviteCode = code.toUpperCase();
+        setState(() => tab = 3);
+      }
+    } on PlatformException catch (_) {
+      // Older builds have no social channel.
+    } on MissingPluginException catch (_) {
+      // Android-only link handoff.
+    }
+  }
+
+  Future<void> _enablePendingOverlay() async {
+    if (widget.prefs.getBool('overlay.pendingEnable') != true) return;
+    try {
+      final status = await OverlayChannel.status();
+      if (!status.permissionGranted) return;
+      await OverlayChannel.enable();
+      await widget.prefs.setBool('overlay.pendingEnable', false);
+    } on PlatformException catch (_) {
+      // Leave pending so a later resume can retry safely.
+    } on MissingPluginException catch (_) {}
   }
 
   @override
@@ -472,6 +448,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
                     0 => const TodayScreen(),
                     1 => const CommitmentsScreen(),
                     2 => const HistoryScreen(),
+                    3 => const BattleScreen(),
                     _ => SettingsScreen(onLogout: widget.onLogout),
                   },
                 ),
@@ -497,6 +474,11 @@ class _HomeShellState extends ConsumerState<HomeShell>
           NavigationDestination(
             icon: Icon(Icons.bar_chart_rounded),
             label: 'History',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.emoji_events_outlined),
+            selectedIcon: Icon(Icons.emoji_events_rounded),
+            label: 'Battle',
           ),
           NavigationDestination(
             icon: Icon(Icons.tune_rounded),

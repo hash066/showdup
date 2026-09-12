@@ -1,32 +1,209 @@
-const {test,before,after}=require('node:test');
-const assert=require('node:assert/strict');
-const fs=require('node:fs');
-const {initializeTestEnvironment,assertFails,assertSucceeds}=require('@firebase/rules-unit-testing');
-const {doc,setDoc,getDoc,updateDoc}=require('firebase/firestore');
-let env;
-before(async()=>{env=await initializeTestEnvironment({projectId:'demo-showdup',firestore:{rules:fs.readFileSync('../firestore.rules','utf8')}});await env.clearFirestore();await env.withSecurityRulesDisabled(async c=>{const db=c.firestore();await setDoc(doc(db,'users/alice'),{displayName:'Alice',stats:{completed:0},isPro:false});await setDoc(doc(db,'commitments/walk'),{ownerUid:'alice'});await setDoc(doc(db,'attempts/walk_2026-09-08'),{ownerUid:'alice',state:'pending'});});});
-after(async()=>{await env.cleanup()});
-test('owner reads succeed, cross-user and anonymous reads fail',async()=>{await assertSucceeds(getDoc(doc(env.authenticatedContext('alice').firestore(),'commitments/walk')));for(const db of [env.authenticatedContext('bob').firestore(),env.unauthenticatedContext().firestore()])for(const path of ['commitments/walk','attempts/walk_2026-09-08','users/alice'])await assertFails(getDoc(doc(db,path)));});
-test('all attempt writes and client commitment writes denied',async()=>{const db=env.authenticatedContext('alice').firestore();for(const path of ['attempts/walk_2026-09-08','attempts/new','commitments/new'])await assertFails(setDoc(doc(db,path),{ownerUid:'alice',completedAt:new Date()}));});
-test('protected profile updates denied',async()=>{const db=env.authenticatedContext('alice').firestore();for(const key of ['isPro','proExpiresAt','stats','completedAt','commitmentRevision'])await assertFails(updateDoc(doc(db,'users/alice'),{[key]:true}));await assertSucceeds(updateDoc(doc(db,'users/alice'),{displayName:'Updated'}));});
-test('profile creation is an allowlist, including no completion timestamp',async()=>{const db=env.authenticatedContext('newuser').firestore();for(const key of ['isPro','proExpiresAt','stats','completedAt'])await assertFails(setDoc(doc(db,'users/newuser'),{displayName:'New',[key]:true}));await assertSucceeds(setDoc(doc(db,'users/newuser'),{displayName:'New',timezone:'Asia/Kolkata'}));});
+const {test, before, after} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const {
+  initializeTestEnvironment,
+  assertFails,
+  assertSucceeds,
+} = require('@firebase/rules-unit-testing');
+const {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  setDoc,
+  where,
+} = require('firebase/firestore');
 
-test('callable transactions: cap races, idempotency, timestamps, ownership and abandoned attempts',async()=>{
- process.env.GCLOUD_PROJECT='demo-showdup';const api=require('../lib/index');const {getFirestore,Timestamp}=require('firebase-admin/firestore');const db=getFirestore();
- const u='functions-test';const auth={uid:u,token:{auth_time:Date.now()/1000}};
- const run=(name,data)=>api[name].run({data,auth});
- const good={title:'Walk',verifierType:'steps',verifierConfig:{targetSteps:200,minDurationMs:60000},schedule:{daysOfWeek:[1,2,3,4,5,6,7],windowStartLocal:'00:00',windowEndLocal:'23:59',timezone:'UTC'},reminder:{intervalMinutes:20,volumeMode:'gentle',maxReminders:6},restrictions:{enabled:false,packages:[]}};
- const results=await Promise.allSettled([run('createCommitment',good),run('createCommitment',good)]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);const cid=results.find(r=>r.status==='fulfilled').value.commitmentId;
- await assert.rejects(run('createCommitment',{...good,verifierConfig:{targetSteps:1}}));
- const date='2026-09-08',ref=db.doc(`attempts/${cid}_${date}`),base={commitmentId:cid,ownerUid:u,date,windowStartAt:Timestamp.fromMillis(Date.now()-600000),windowEndAt:Timestamp.fromMillis(Date.now()+600000),state:'pending',remindersFired:0,snoozes:0,createdAt:Timestamp.now()};await ref.set(base);
- const payload={stepsSinceBaseline:200,elapsedMs:120000,baselineCapturedAt:Date.now()-120000,completedAt:'1900-01-01'};const evidence={commitmentId:cid,date,type:'steps',payload,completedAt:'1900-01-01'};
- const first=await run('submitEvidence',evidence);assert.equal(first.state,'completed');assert.equal((await run('submitEvidence',evidence)).state,'completed');let snap=(await ref.get()).data();assert.ok(snap.completedAt.toMillis()>Date.now()-10000);assert.equal(snap.evidence.payload.completedAt,undefined);assert.equal((await db.doc(`users/${u}`).get()).data().stats.completed,1);
- await ref.set({...base,state:'abandoned'});await assert.rejects(run('submitEvidence',evidence));
- await ref.set({...base,windowEndAt:Timestamp.fromMillis(Date.now()-1000)});await assert.rejects(run('submitEvidence',evidence));
- await assert.rejects(run('endAttempt',{commitmentId:cid,date,reason:'verified'}));
- await ref.set(base);assert.equal((await run('endAttempt',{commitmentId:cid,date,reason:'user_ended'})).state,'abandoned');
- await assert.rejects(api.submitEvidence.run({data:evidence,auth:{uid:'other',token:{}}}));
- await assert.rejects(run('updateCommitment',{commitmentId:cid,patch:{ownerUid:'other'}}));
- await ref.set({...base,windowEndAt:Timestamp.fromMillis(Date.now()-1000)});await api.rolloverAttempts.run({});await api.rolloverAttempts.run({});assert.equal((await ref.get()).data().state,'expired');
+let env;
+
+before(async () => {
+  env = await initializeTestEnvironment({
+    projectId: 'demo-showdup',
+    firestore: {rules: fs.readFileSync('../firestore.rules', 'utf8')},
+  });
+  await env.clearFirestore();
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'socialUsers/alice'), {displayName: 'Alice'});
+    await setDoc(doc(db, 'battleMemberships/alice'), {battleId: 'weekly'});
+    await setDoc(doc(db, 'battles/weekly'), {
+      memberUids: ['alice', 'friend'],
+    });
+    await setDoc(doc(db, 'battles/weekly/scores/alice'), {score: 700});
+    await setDoc(doc(db, 'battleInvites/ABC123'), {battleId: 'weekly'});
+  });
 });
 
+after(async () => env.cleanup());
+
+test('a user can read only their own social profile', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  const outsider = env.authenticatedContext('outsider').firestore();
+  await assertSucceeds(getDoc(doc(alice, 'socialUsers/alice')));
+  await assertFails(getDoc(doc(outsider, 'socialUsers/alice')));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'socialUsers/alice')));
+  await assertSucceeds(getDoc(doc(alice, 'battleMemberships/alice')));
+  await assertFails(getDoc(doc(outsider, 'battleMemberships/alice')));
+});
+
+test('only battle members read battles and scores', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  const outsider = env.authenticatedContext('outsider').firestore();
+  await assertSucceeds(getDoc(doc(alice, 'battles/weekly')));
+  await assertSucceeds(getDoc(doc(alice, 'battles/weekly/scores/alice')));
+  await assertFails(getDoc(doc(outsider, 'battles/weekly')));
+  await assertFails(getDoc(doc(outsider, 'battles/weekly/scores/alice')));
+  await assertSucceeds(getDocs(query(
+    collection(alice, 'battles'),
+    where('memberUids', 'array-contains', 'alice'),
+  )));
+  await assertFails(getDocs(query(
+    collection(outsider, 'battles'),
+    where('memberUids', 'array-contains', 'alice'),
+  )));
+});
+
+test('all social mutations and invite access remain server-only', async () => {
+  const alice = env.authenticatedContext('alice').firestore();
+  for (const path of [
+    'socialUsers/alice',
+    'battleMemberships/alice',
+    'battles/new',
+    'battles/weekly/scores/alice',
+    'battleInvites/ABC123',
+    'rateLimits/alice_join',
+  ]) {
+    await assertFails(setDoc(doc(alice, path), {score: 1000}));
+  }
+  await assertFails(getDoc(doc(alice, 'battleInvites/ABC123')));
+});
+
+test('callables require Google, activate on join, score idempotently and cap ten members', async () => {
+  process.env.GCLOUD_PROJECT = 'demo-showdup';
+  const api = require('../lib/index');
+  const {getFirestore} = require('firebase-admin/firestore');
+  const db = getFirestore();
+  const auth = (uid) => ({
+    uid,
+    token: {
+      name: uid,
+      auth_time: Date.now() / 1000,
+      firebase: {identities: {'google.com': [uid]}},
+    },
+  });
+  const app = {appId: 'test-app'};
+  const run = (name, uid, data) => api[name].run({
+    data,
+    auth: auth(uid),
+    app,
+  });
+
+  await assertFails(getDoc(doc(env.authenticatedContext('outsider').firestore(), 'battles/weekly')));
+  await api.createBattle.run({
+    data: {name: 'Nope', timezone: 'UTC', mascot: 'fox'},
+    auth: {uid: 'anonymous', token: {firebase: {identities: {}}}},
+    app,
+  }).then(() => assert.fail('anonymous user created a battle'), () => {});
+  await api.deleteSocialAccount.run({
+    data: {},
+    auth: {
+      uid: 'stolen-session',
+      token: {
+        auth_time: Date.now() / 1000 - 3600,
+        firebase: {identities: {'google.com': ['stolen-session']}},
+      },
+    },
+    app,
+  }).then(() => assert.fail('stale Google session deleted an account'), () => {});
+
+  const created = await run('createBattle', 'captain', {
+    name: 'Focus crew',
+    timezone: 'UTC',
+    mascot: 'cat',
+  });
+  const invite = await run('createBattleInvite', 'captain', {
+    battleId: created.battleId,
+  });
+  assert.match(invite.code, /^[A-Z0-9]{6}$/);
+
+  const repeatedCreatorJoin = await run('joinBattle', 'captain', {
+    code: invite.code,
+  });
+  assert.equal(repeatedCreatorJoin.alreadyMember, true);
+  let inviteDoc = (await db.doc(`battleInvites/${invite.code}`).get()).data();
+  assert.equal(inviteDoc.uses, 0, 'an idempotent join does not consume an invite');
+  let captainScore = (await db.doc(
+    `battles/${created.battleId}/scores/captain`,
+  ).get()).data();
+  assert.equal(captainScore.mascot, 'cat', 'an idempotent join does not reset score');
+
+  await run('joinBattle', 'friend', {code: invite.code});
+  let battle = (await db.doc(`battles/${created.battleId}`).get()).data();
+  assert.equal(battle.active, true);
+  assert.equal(battle.memberUids.length, 2);
+
+  const outcome = {
+    eventId: 'attempt_2026-09-12',
+    outcome: 'completed',
+    snoozes: 2,
+    resolvedAt: Date.now(),
+    petMood: 'happy',
+    burstCount: 0,
+    mascot: 'cat',
+  };
+  const first = await run('submitBattleOutcome', 'captain', outcome);
+  const again = await run('submitBattleOutcome', 'captain', outcome);
+  assert.equal(first.score, 900);
+  assert.equal(again.duplicate, true);
+  const eventDocs = await db.collection(
+    `battles/${created.battleId}/events`,
+  ).where('eventId', '==', outcome.eventId).get();
+  const storedEvent = eventDocs.docs[0].data();
+  assert.ok(storedEvent.expiresAt.toMillis() > Date.now() + 13 * 86400000,
+    'outcome idempotency records expire after two weeks');
+
+  for (let index = 0; index < 3; index++) {
+    await run('submitBattleOutcome', 'captain', {
+      ...outcome,
+      eventId: `miss_${index}`,
+      outcome: 'expired',
+      petMood: 'happy',
+      burstCount: 0,
+    });
+  }
+  captainScore = (await db.doc(
+    `battles/${created.battleId}/scores/captain`,
+  ).get()).data();
+  assert.equal(captainScore.penalties, 100,
+    'server derives burst penalty despite false client pet state');
+  assert.equal(captainScore.petMood, 'cracked');
+
+  const rival = await run('createBattle', 'rival', {
+    name: 'Other crew', timezone: 'UTC', mascot: 'fox',
+  });
+  const rivalInvite = await run('createBattleInvite', 'rival', {
+    battleId: rival.battleId,
+  });
+  await run('joinBattle', 'friend', {code: rivalInvite.code})
+    .then(() => assert.fail('member joined a second battle'), () => {});
+
+  await db.doc('battleMemberships/stale').set({
+    uid: 'stale', battleId: 'deleted-battle',
+  });
+  const repaired = await run('createBattle', 'stale', {
+    name: 'Recovered crew', timezone: 'UTC', mascot: 'puppy',
+  });
+  const repairedMembership = (await db.doc('battleMemberships/stale').get()).data();
+  assert.equal(repairedMembership.battleId, repaired.battleId,
+    'stale membership pointers are repaired atomically');
+
+  for (let index = 0; index < 8; index++) {
+    await run('joinBattle', `member${index}`, {code: invite.code});
+  }
+  battle = (await db.doc(`battles/${created.battleId}`).get()).data();
+  assert.equal(battle.memberUids.length, 10);
+  await run('joinBattle', 'eleventh', {code: invite.code})
+    .then(() => assert.fail('eleventh member joined'), () => {});
+});

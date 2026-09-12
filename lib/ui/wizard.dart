@@ -6,6 +6,9 @@ import '../models/commitment.dart';
 import '../models/verifier_config.dart';
 import '../models/enums.dart';
 import '../platform/alarm_channel.dart';
+import '../platform/overlay_channel.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../platform/blocker_channel.dart';
 import '../services/controller.dart';
 import '../verification/verifier_registry.dart';
 import 'app.dart';
@@ -31,10 +34,18 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       maxReminders = 6,
       dwell = 5,
       radius = 150;
-  bool loud = false, busy = false;
+  bool loud = false,
+      busy = false,
+      restrictionsEnabled = false,
+      customDayTimes = false;
   String? error;
+  List<BlockableApp> blockableApps = const [];
+  final Set<String> selectedPackages = {};
+  bool loadingApps = false;
   VerifierType type = VerifierType.steps;
   Set<int> days = {1, 2, 3, 4, 5};
+  final Map<int, TimeOfDay> dayStarts = {};
+  final Map<int, TimeOfDay> dayEnds = {};
   TimeOfDay start = const TimeOfDay(hour: 6, minute: 30),
       end = const TimeOfDay(hour: 9, minute: 0);
   @override
@@ -47,10 +58,17 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       days = c.schedule.daysOfWeek.toSet();
       start = _time(c.schedule.windowStartLocal);
       end = _time(c.schedule.windowEndLocal);
+      customDayTimes = c.schedule.hasCustomWindows;
+      for (final entry in c.schedule.dayWindows.entries) {
+        dayStarts[entry.key] = _time(entry.value.startLocal);
+        dayEnds[entry.key] = _time(entry.value.endLocal);
+      }
       zone.text = c.schedule.timezone;
       interval = c.reminder.intervalMinutes;
-      maxReminders = c.reminder.maxReminders;
+      maxReminders = c.reminder.maxReminders.clamp(1, 6);
       loud = c.reminder.volumeMode == VolumeMode.loud;
+      restrictionsEnabled = c.restrictions.enabled;
+      selectedPackages.addAll(c.restrictions.packages);
       final cfg = c.verifierConfig;
       if (cfg is StepsConfig) target = cfg.targetSteps;
       if (cfg is LocationConfig) {
@@ -89,12 +107,29 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
           dwellMs: dwell * 60000,
           label: label.text.trim(),
         );
-  CommitmentSchedule get schedule => CommitmentSchedule(
-    daysOfWeek: days.toList()..sort(),
-    windowStartLocal: _clock(start),
-    windowEndLocal: _clock(end),
-    timezone: zone.text.trim(),
-  );
+  CommitmentSchedule get schedule {
+    final isPro = ref.read(appProvider).user?.isPro == true;
+    final selected = days.toList()..sort();
+    final existingWindows = widget.existing?.schedule.dayWindows ?? const {};
+    return CommitmentSchedule(
+      daysOfWeek: selected,
+      windowStartLocal: _clock(start),
+      windowEndLocal: _clock(end),
+      timezone: zone.text.trim(),
+      dayWindows: isPro && customDayTimes
+          ? {
+              for (final day in selected)
+                day: DailyWindow(
+                  startLocal: _clock(dayStarts[day] ?? start),
+                  endLocal: _clock(dayEnds[day] ?? end),
+                ),
+            }
+          : !isPro
+          ? existingWindows
+          : const {},
+    );
+  }
+
   Future<void> next() async {
     setState(() => error = null);
     if (page == 0) {
@@ -113,8 +148,39 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       setState(() => error = schedule.validate());
       return;
     }
-    if (page < 3) {
+    if (page == 2 && !ref.read(appProvider).preview) {
+      var permissions = await AlarmChannel.getPermissionStatus();
+      if (!permissions.notifications) {
+        await AlarmChannel.requestPermission('notifications');
+        permissions = await AlarmChannel.getPermissionStatus();
+      }
+      if (!permissions.notifications || !permissions.exactAlarm) {
+        setState(
+          () => error = !permissions.notifications
+              ? 'Allow notifications before saving. Without them, ShowdUp cannot remind you.'
+              : 'Enable exact reminders in Android settings before saving. Without them, Android may delay the recurring reminders you chose.',
+        );
+        return;
+      }
+    }
+    final isPro = ref.read(appProvider).user?.isPro == true;
+    if (page == 3 && isPro && restrictionsEnabled) {
+      if (selectedPackages.isEmpty) {
+        setState(() => error = 'Choose at least one distracting app.');
+        return;
+      }
+      final status = await BlockerChannel.status();
+      if (!status.accessibilityEnabled) {
+        setState(
+          () => error =
+              'Enable ShowdUp accessibility access so it can detect and cover only the apps you selected.',
+        );
+        return;
+      }
+    }
+    if (page < 4) {
       setState(() => page++);
+      if (page == 3 && isPro) await _loadBlockableApps();
       return;
     }
     await save();
@@ -123,6 +189,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   Future<void> save() async {
     setState(() => busy = true);
     final app = ref.read(appProvider);
+    final firstCommitment = widget.existing == null && app.commitments.isEmpty;
     try {
       if (!app.preview) {
         final verifier = VerifierRegistry().create(type);
@@ -146,7 +213,12 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
           volumeMode: loud ? VolumeMode.loud : VolumeMode.gentle,
           maxReminders: maxReminders,
         ).toJson(),
-        'restrictions': const Restrictions().toJson(),
+        'restrictions': Restrictions(
+          enabled: app.user?.isPro == true && restrictionsEnabled,
+          packages: app.user?.isPro == true
+              ? (selectedPackages.toList()..sort())
+              : const [],
+        ).toJson(),
       };
       if (widget.existing == null) {
         await app.repository.create(data);
@@ -154,11 +226,57 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         await app.repository.update(widget.existing!.id, data);
       }
       await app.refresh();
+      if (firstCommitment && mounted) await _offerOverlay();
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) setState(() => error = friendlyError(e));
     } finally {
       if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _offerOverlay() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('overlay.permissionExplained') == true || !mounted) {
+      return;
+    }
+    await prefs.setBool('overlay.permissionExplained', true);
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Keep your pet in sight?'),
+        content: const Text(
+          'ShowdUp can display a small draggable accountability pet over other apps. It is optional, clearly labeled, and can be turned off anytime.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Set up overlay'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      await prefs.setBool('overlay.pendingEnable', true);
+      await OverlayChannel.requestPermission();
+    }
+  }
+
+  Future<void> _loadBlockableApps() async {
+    if (blockableApps.isNotEmpty || loadingApps) return;
+    setState(() => loadingApps = true);
+    try {
+      final apps = await BlockerChannel.listApps();
+      if (mounted) setState(() => blockableApps = apps);
+    } catch (e) {
+      if (mounted) setState(() => error = friendlyError(e));
+    } finally {
+      if (mounted) setState(() => loadingApps = false);
     }
   }
 
@@ -196,7 +314,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: Row(
                 children: List.generate(
-                  4,
+                  5,
                   (i) => Expanded(
                     child: Container(
                       height: 4,
@@ -214,13 +332,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               child: ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
-                  Eyebrow('Step ${page + 1} of 4'),
+                  Eyebrow('Step ${page + 1} of 5'),
                   const SizedBox(height: 12),
                   Text(
                     [
                       'Choose your finish line.',
                       'Give it a place in your day.',
                       'Reminders, on your terms.',
+                      'Choose your guardrails.',
                       'This is your promise.',
                     ][page],
                     style: const TextStyle(
@@ -235,6 +354,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                     0 => _goal(),
                     1 => _schedule(),
                     2 => _reminders(),
+                    3 => _restrictions(),
                     _ => _review(),
                   },
                   if (error != null) ...[
@@ -242,13 +362,19 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                     ErrorNotice(error!),
                     if (!ref.read(appProvider).preview)
                       TextButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) => const PermissionsScreen(),
-                          ),
+                        onPressed: page == 3
+                            ? BlockerChannel.openAccessibilitySettings
+                            : () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const PermissionsScreen(),
+                                ),
+                              ),
+                        child: Text(
+                          page == 3
+                              ? 'Open accessibility settings'
+                              : 'Open permissions & reliability',
                         ),
-                        child: const Text('Open permissions & reliability'),
                       ),
                   ],
                 ],
@@ -273,7 +399,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                         child: Text(
                           busy
                               ? 'Saving…'
-                              : page == 3
+                              : page == 4
                               ? widget.existing == null
                                     ? 'I’m showing up  →'
                                     : 'Save changes'
@@ -444,50 +570,153 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       ),
     ),
   );
-  List<Widget> _schedule() => [
-    const Text(
-      'Pick the days you can repeat. Your commitment uses this timezone, even when your phone travels.',
-      style: TextStyle(color: T.muted, height: 1.6),
-    ),
-    const SizedBox(height: 22),
-    Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: List.generate(
-        7,
-        (i) => FilterChip(
-          label: Text(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i]),
-          selected: days.contains(i + 1),
-          onSelected: (v) =>
-              setState(() => v ? days.add(i + 1) : days.remove(i + 1)),
+  List<Widget> _schedule() {
+    final isPro = ref.read(appProvider).user?.isPro == true;
+    return [
+      const Text(
+        'Pick the days you can repeat. Your commitment uses this timezone, even when your phone travels.',
+        style: TextStyle(color: T.muted, height: 1.6),
+      ),
+      const SizedBox(height: 22),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: List.generate(
+          7,
+          (i) => FilterChip(
+            label: Text(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i]),
+            selected: days.contains(i + 1),
+            onSelected: (v) => setState(() {
+              final day = i + 1;
+              if (v) {
+                days.add(day);
+                dayStarts.putIfAbsent(day, () => start);
+                dayEnds.putIfAbsent(day, () => end);
+              } else {
+                days.remove(day);
+              }
+            }),
+          ),
         ),
       ),
-    ),
-    const SizedBox(height: 24),
-    Panel(
-      child: Column(
-        children: [
-          _timeRow('Window opens', start, (v) => setState(() => start = v)),
-          const Divider(height: 32),
-          _timeRow('Window ends', end, (v) => setState(() => end = v)),
+      const SizedBox(height: 24),
+      Panel(
+        child: Column(
+          children: [
+            _timeRow('Window opens', start, (v) => setState(() => start = v)),
+            const Divider(height: 32),
+            _timeRow('Window ends', end, (v) => setState(() => end = v)),
+          ],
+        ),
+      ),
+      if (isPro) ...[
+        const SizedBox(height: 16),
+        SwitchListTile(
+          contentPadding: const EdgeInsets.all(12),
+          title: const Text('Different time for each day'),
+          subtitle: const Text(
+            'Pro · Give every selected weekday its own start and end time.',
+            style: TextStyle(color: T.muted, fontSize: 12, height: 1.5),
+          ),
+          value: customDayTimes,
+          onChanged: (value) => setState(() {
+            customDayTimes = value;
+            if (value) {
+              for (final day in days) {
+                dayStarts.putIfAbsent(day, () => start);
+                dayEnds.putIfAbsent(day, () => end);
+              }
+            }
+          }),
+        ),
+        if (customDayTimes) ...[
+          const SizedBox(height: 12),
+          Panel(
+            child: Column(
+              children: [
+                for (final day in (days.toList()..sort())) ...[
+                  _dayWindowRow(day),
+                  if (day != (days.toList()..sort()).last)
+                    const Divider(height: 28),
+                ],
+              ],
+            ),
+          ),
         ],
+      ] else ...[
+        const SizedBox(height: 12),
+        const Text(
+          'Pro can use a different window on each selected day.',
+          style: TextStyle(color: T.muted, fontSize: 12),
+        ),
+      ],
+      const SizedBox(height: 24),
+      TextField(
+        controller: zone,
+        decoration: const InputDecoration(
+          labelText: 'Commitment timezone',
+          hintText: 'Asia/Kolkata',
+          helperText: 'IANA timezone, for example Europe/London',
+        ),
       ),
-    ),
-    const SizedBox(height: 24),
-    TextField(
-      controller: zone,
-      decoration: const InputDecoration(
-        labelText: 'Commitment timezone',
-        hintText: 'Asia/Kolkata',
-        helperText: 'IANA timezone, for example Europe/London',
+      const SizedBox(height: 20),
+      const Text(
+        'Reminders stop when the window ends. A window must be at least 15 minutes and finish on the same day.',
+        style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
       ),
-    ),
-    const SizedBox(height: 20),
-    const Text(
-      'Reminders stop when the window ends. A window must be at least 15 minutes and finish on the same day.',
-      style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
-    ),
-  ];
+    ];
+  }
+
+  Widget _dayWindowRow(int day) {
+    const names = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    final dayStart = dayStarts[day] ?? start;
+    final dayEnd = dayEnds[day] ?? end;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          names[day - 1],
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: _compactTime('Opens', dayStart, (value) {
+                setState(() => dayStarts[day] = value);
+              }),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _compactTime('Ends', dayEnd, (value) {
+                setState(() => dayEnds[day] = value);
+              }),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _compactTime(
+    String label,
+    TimeOfDay time,
+    void Function(TimeOfDay) change,
+  ) => OutlinedButton(
+    onPressed: () async {
+      final value = await showTimePicker(context: context, initialTime: time);
+      if (value != null) change(value);
+    },
+    child: Text('$label ${_clock(time)}'),
+  );
   Widget _timeRow(
     String label,
     TimeOfDay time,
@@ -518,7 +747,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Repeat every $interval minutes',
+            'Start with a $interval minute snooze gap',
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           Slider(
@@ -536,8 +765,8 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
           Slider(
             value: maxReminders.toDouble(),
             min: 1,
-            max: 20,
-            divisions: 19,
+            max: 6,
+            divisions: 5,
             onChanged: (v) => setState(() => maxReminders = v.round()),
           ),
         ],
@@ -564,6 +793,94 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
     ),
   ];
+  List<Widget> _restrictions() {
+    final isPro = ref.read(appProvider).user?.isPro == true;
+    if (!isPro) {
+      return [
+        const Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.lock_outline, color: T.accent, size: 32),
+              SizedBox(height: 16),
+              Text(
+                'Unlock after completion',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              ),
+              SizedBox(height: 10),
+              Text(
+                'With Pro, only the distracting apps you choose are covered during this commitment window. Completing or ending today removes the restriction.',
+                style: TextStyle(color: T.muted, height: 1.6),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        FilledButton.tonal(
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute<void>(builder: (_) => const ProScreen()),
+          ),
+          child: const Text('Explore ShowdUp Pro'),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'App blocking is optional. Reminders and verification remain available for free.',
+          style: TextStyle(color: T.muted, fontSize: 12, height: 1.5),
+        ),
+      ];
+    }
+    return [
+      SwitchListTile(
+        contentPadding: const EdgeInsets.all(12),
+        title: const Text('Block selected distractions'),
+        subtitle: const Text(
+          'ShowdUp observes the foreground app only while a restriction is active. It does not read typed text or screen contents.',
+          style: TextStyle(color: T.muted, fontSize: 12, height: 1.5),
+        ),
+        value: restrictionsEnabled,
+        onChanged: (value) async {
+          setState(() => restrictionsEnabled = value);
+          if (value) await _loadBlockableApps();
+        },
+      ),
+      if (restrictionsEnabled) ...[
+        const SizedBox(height: 12),
+        const ErrorNotice(
+          'Accessibility access lets ShowdUp notice when a selected app opens and place a blocking screen over it. You can disable access or uninstall ShowdUp at any time.',
+        ),
+        const SizedBox(height: 16),
+        if (loadingApps)
+          const Center(child: CircularProgressIndicator())
+        else if (blockableApps.isEmpty)
+          OutlinedButton.icon(
+            onPressed: _loadBlockableApps,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Load installed apps'),
+          )
+        else
+          ...blockableApps.map(
+            (app) => CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: selectedPackages.contains(app.packageName),
+              title: Text(app.label),
+              subtitle: Text(
+                app.packageName,
+                style: const TextStyle(color: T.muted, fontSize: 10),
+              ),
+              onChanged: (selected) => setState(() {
+                if (selected == true) {
+                  selectedPackages.add(app.packageName);
+                } else {
+                  selectedPackages.remove(app.packageName);
+                }
+              }),
+            ),
+          ),
+      ],
+    ];
+  }
+
   List<Widget> _review() => [
     Panel(
       child: Column(
@@ -592,7 +909,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
           Text('${_clock(start)} – ${_clock(end)}'),
           const SizedBox(height: 8),
           Text(
-            '${days.length} days a week · ${zone.text}',
+            customDayTimes && ref.read(appProvider).user?.isPro == true
+                ? '${days.length} custom day windows · ${zone.text}'
+                : '${days.length} days a week · ${zone.text}',
             style: const TextStyle(color: T.muted, fontSize: 12),
           ),
           const SizedBox(height: 16),
@@ -600,6 +919,13 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
             'Every $interval minutes · up to $maxReminders reminders',
             style: const TextStyle(fontSize: 12),
           ),
+          if (restrictionsEnabled) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${selectedPackages.length} selected app${selectedPackages.length == 1 ? '' : 's'} blocked until completion or today is ended',
+              style: const TextStyle(color: T.accent, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 6),
           Text(
             loud

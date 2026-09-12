@@ -15,34 +15,37 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    match /users/{uid} {
+    match /socialUsers/{uid} {
       allow read: if isOwner(uid);
-
-      // A new user doc may not arrive carrying entitlement or stats.
-      allow create: if isOwner(uid)
-        && request.resource.data.keys()
-             .hasOnly(['displayName', 'handle', 'photoUrl', 'timezone', 'oneSignalId', 'createdAt', 'updatedAt']);
-
-      // Only profile fields are client writable. isPro, proExpiresAt and
-      // stats are function territory.
-      allow update: if isOwner(uid)
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['displayName', 'handle', 'photoUrl',
-                       'timezone', 'oneSignalId', 'updatedAt']);
-
-      allow delete: if false;
-    }
-
-    match /commitments/{commitmentId} {
-      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
-      // createCommitment / updateCommitment only.
       allow write: if false;
     }
 
-    match /attempts/{attemptId} {
-      allow read: if signedIn() && resource.data.ownerUid == request.auth.uid;
-      // No client writes, ever. This is what makes completedAt trustworthy.
+    match /battleMemberships/{uid} {
+      allow read: if isOwner(uid);
       allow write: if false;
+    }
+
+    match /battles/{battleId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.memberUids;
+      allow write: if false;
+
+      match /scores/{uid} {
+        allow read: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/battles/$(battleId)).data.memberUids;
+        allow write: if false;
+      }
+
+      match /events/{eventId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /battleInvites/{code} {
+      allow read, write: if false;
+    }
+
+    match /rateLimits/{bucket} {
+      allow read, write: if false;
     }
   }
 }
