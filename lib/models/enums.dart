@@ -4,7 +4,10 @@ library;
 enum VerifierType {
   steps('steps'),
   location('location'),
-  walk('walk');
+  walk('walk'),
+  focus('focus'),
+  healthWorkout('health_workout'),
+  leetcode('leetcode');
 
   const VerifierType(this.wire);
   final String wire;
@@ -30,7 +33,11 @@ enum WalkGoalMode {
 /// presets can evolve without guessing from the verifier type.
 enum CommitmentKind {
   walk('walk'),
-  gym('gym');
+  gym('gym'),
+  arrive('arrive'),
+  focus('focus'),
+  workout('workout'),
+  leetcode('leetcode');
 
   const CommitmentKind(this.wire);
   final String wire;
@@ -39,9 +46,13 @@ enum CommitmentKind {
     for (final kind in CommitmentKind.values) {
       if (kind.wire == value) return kind;
     }
-    return verifier == VerifierType.location
-        ? CommitmentKind.gym
-        : CommitmentKind.walk;
+    return switch (verifier) {
+      VerifierType.location => CommitmentKind.gym,
+      VerifierType.focus => CommitmentKind.focus,
+      VerifierType.healthWorkout => CommitmentKind.workout,
+      VerifierType.leetcode => CommitmentKind.leetcode,
+      _ => CommitmentKind.walk,
+    };
   }
 }
 
@@ -78,6 +89,7 @@ enum EndedReason {
 
 enum CommitmentStatus {
   active('active'),
+  draft('draft'),
   paused('paused'),
   archived('archived');
 

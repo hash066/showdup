@@ -2,6 +2,20 @@ import '../models/attempt.dart';
 import '../models/enums.dart';
 import '../models/verifier_config.dart';
 
+Map<String, dynamic> evidenceEnvelope({
+  required VerifierType verifier,
+  required String source,
+  required Map<String, dynamic> details,
+  List<String> integrityFlags = const [],
+}) => {
+  'schemaVersion': 1,
+  'verifier': verifier.wire,
+  'source': source,
+  'capturedAt': DateTime.now().millisecondsSinceEpoch,
+  'integrityFlags': integrityFlags,
+  ...details,
+};
+
 enum Outcome { progress, satisfied, unverifiable }
 
 class VerificationSignal {

@@ -15,7 +15,118 @@ sealed class VerifierConfig {
         VerifierType.steps => StepsConfig.fromJson(j),
         VerifierType.location => LocationConfig.fromJson(j),
         VerifierType.walk => WalkConfig.fromJson(j),
+        VerifierType.focus => FocusConfig.fromJson(j),
+        VerifierType.healthWorkout => HealthWorkoutConfig.fromJson(j),
+        VerifierType.leetcode => LeetCodeConfig.fromJson(j),
       };
+}
+
+class FocusConfig extends VerifierConfig {
+  const FocusConfig({
+    required this.packages,
+    this.targetDurationMs = 25 * 60000,
+    this.graceSeconds = 10,
+  });
+
+  final List<String> packages;
+  final int targetDurationMs;
+  final int graceSeconds;
+
+  @override
+  VerifierType get type => VerifierType.focus;
+
+  @override
+  String? validate() {
+    if (packages.isEmpty) return 'Choose at least one distracting app.';
+    if (targetDurationMs < 5 * 60000 || targetDurationMs > 3 * 60 * 60000) {
+      return 'Focus time must be between 5 and 180 minutes.';
+    }
+    if (graceSeconds != 10) return 'The Focus grace period must be 10 seconds.';
+    return null;
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'packages': packages,
+    'targetDurationMs': targetDurationMs,
+    'graceSeconds': graceSeconds,
+  };
+
+  factory FocusConfig.fromJson(Map<String, dynamic> j) => FocusConfig(
+    packages: (j['packages'] as List? ?? const []).cast<String>(),
+    targetDurationMs: (j['targetDurationMs'] as num?)?.toInt() ?? 25 * 60000,
+    graceSeconds: (j['graceSeconds'] as num?)?.toInt() ?? 10,
+  );
+}
+
+class HealthWorkoutConfig extends VerifierConfig {
+  const HealthWorkoutConfig({
+    this.activityType = 'any',
+    this.targetDurationMs = 30 * 60000,
+  });
+
+  /// Stable app-level values mapped to Health Connect exercise constants.
+  final String activityType; // any | strength | running | cycling | yoga
+  final int targetDurationMs;
+
+  static const supported = {'any', 'strength', 'running', 'cycling', 'yoga'};
+
+  @override
+  VerifierType get type => VerifierType.healthWorkout;
+
+  @override
+  String? validate() {
+    if (!supported.contains(activityType)) return 'Choose a supported workout.';
+    if (targetDurationMs < 10 * 60000 || targetDurationMs > 3 * 60 * 60000) {
+      return 'Workout time must be between 10 and 180 minutes.';
+    }
+    return null;
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'activityType': activityType,
+    'targetDurationMs': targetDurationMs,
+  };
+
+  factory HealthWorkoutConfig.fromJson(Map<String, dynamic> j) =>
+      HealthWorkoutConfig(
+        activityType: j['activityType'] as String? ?? 'any',
+        targetDurationMs:
+            (j['targetDurationMs'] as num?)?.toInt() ?? 30 * 60000,
+      );
+}
+
+class LeetCodeConfig extends VerifierConfig {
+  const LeetCodeConfig({required this.username, this.targetAccepted = 1});
+
+  final String username;
+  final int targetAccepted;
+
+  @override
+  VerifierType get type => VerifierType.leetcode;
+
+  @override
+  String? validate() {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,32}$').hasMatch(username.trim())) {
+      return 'Enter a valid public LeetCode username.';
+    }
+    if (targetAccepted < 1 || targetAccepted > 10) {
+      return 'Choose between 1 and 10 accepted problems.';
+    }
+    return null;
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'username': username.trim(),
+    'targetAccepted': targetAccepted,
+  };
+
+  factory LeetCodeConfig.fromJson(Map<String, dynamic> j) => LeetCodeConfig(
+    username: j['username'] as String? ?? '',
+    targetAccepted: (j['targetAccepted'] as num?)?.toInt() ?? 1,
+  );
 }
 
 class WalkConfig extends VerifierConfig {

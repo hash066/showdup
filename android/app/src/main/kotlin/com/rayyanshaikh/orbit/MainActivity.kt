@@ -20,6 +20,8 @@ import com.google.android.libraries.places.widget.PlaceAutocompleteActivity
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.*
+import androidx.health.connect.client.PermissionController
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -30,6 +32,8 @@ object Events {
 class MainActivity:FlutterFragmentActivity(){
  private var permissionResult:MethodChannel.Result?=null
  private var placeResult:MethodChannel.Result?=null
+ private var healthPermissionResult:MethodChannel.Result?=null
+ private val healthPermissionLauncher=registerForActivityResult(PermissionController.createRequestPermissionResultContract()){granted->healthPermissionResult?.success(granted.containsAll(HealthConnectBridge.permissions));healthPermissionResult=null}
  private val placeAutocompleteLauncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){activityResult->
   val pending=placeResult?:return@registerForActivityResult
   val returned=activityResult.data
@@ -74,6 +78,9 @@ class MainActivity:FlutterFragmentActivity(){
    "sync"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();val sessions=(a["sessions"] as? List<*>)?.mapNotNull{it as? Map<*,*>}?:emptyList();result.success(AppBlocker.sync(this,sessions))}
    "setEntitlement"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();AppBlocker.setEntitlement(this,a["enabled"]==true,(a["expiresAtEpochMs"] as? Number)?.toLong());result.success(true)}
    "stop"->{val a=call.arguments as? Map<*,*>;AppBlocker.stop(this,a?.get("attemptId")?.toString());result.success(true)}
+   "startFocus"->{result.success(FocusTracker.start(this,call.arguments as? Map<*,*>?:emptyMap<String,Any>()))}
+   "focusStatus"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();result.success(FocusTracker.status(this,a["attemptId"]?.toString().orEmpty()))}
+   "stopFocus"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();FocusTracker.stop(this,a["attemptId"]?.toString().orEmpty());result.success(true)}
    else->result.notImplemented()
   }}catch(e:Exception){result.error("blocker_error",e.message,null)}}
   MethodChannel(engine.dartExecutor.binaryMessenger,"app.showdup/overlay").setMethodCallHandler{call,result->try{when(call.method){
@@ -100,6 +107,12 @@ class MainActivity:FlutterFragmentActivity(){
    }
    else->result.notImplemented()
   }}catch(e:Exception){placeResult=null;result.error("places_error",e.message,null)}}
+  MethodChannel(engine.dartExecutor.binaryMessenger,"app.showdup/health").setMethodCallHandler{call,result->try{when(call.method){
+   "availability"->CoroutineScope(Dispatchers.IO).launch{try{val value=HealthConnectBridge.availability(this@MainActivity);withContext(Dispatchers.Main){result.success(value)}}catch(e:Exception){withContext(Dispatchers.Main){result.error("health_error",e.message,null)}}}
+   "requestPermissions"->{if(!HealthConnectBridge.sdkAvailable(this)){result.success(false)}else if(healthPermissionResult!=null){result.error("busy","Health permission request is already open",null)}else{healthPermissionResult=result;healthPermissionLauncher.launch(HealthConnectBridge.permissions)}}
+   "checkWorkout"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();CoroutineScope(Dispatchers.IO).launch{try{val value=HealthConnectBridge.checkWorkout(this@MainActivity,a);withContext(Dispatchers.Main){result.success(value)}}catch(e:Exception){withContext(Dispatchers.Main){result.error("health_error",e.message,null)}}}}
+   else->result.notImplemented()
+  }}catch(e:Exception){result.error("health_error",e.message,null)}}
   AlarmEngine.channels(this)
   if(intent.getBooleanExtra("restoreOverlay",false)){intent.removeExtra("restoreOverlay");OverlayService.enable(this)}
  }
@@ -118,7 +131,7 @@ class MainActivity:FlutterFragmentActivity(){
    "acknowledgeCompletions"->{
     val ids=args["attemptIds"] as? List<*>?:emptyList<Any>()
     val edit=AlarmEngine.prefs(this).edit()
-    ids.forEach{edit.remove("completion:$it")}
+    ids.forEach{edit.remove("completion:$it");FocusTracker.stop(this,it.toString())}
     edit.apply();r.success(true)
    }
    "pendingFailures"->{

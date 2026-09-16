@@ -60,6 +60,36 @@ void main() {
     },
   );
 
+  test(
+    'drafts schedule nothing and do not consume the free active slot',
+    () async {
+      final repo = await _repository(DateTime.utc(2026, 9, 8, 2));
+      await repo.create({
+        ..._commitment,
+        'status': CommitmentStatus.draft.wire,
+      });
+      expect(
+        (await repo.commitments().first).single.status,
+        CommitmentStatus.draft,
+      );
+      expect(await repo.attempts().first, isEmpty);
+
+      await repo.create({..._commitment, 'title': 'Active walk'});
+      final commitments = await repo.commitments().first;
+      expect(
+        commitments.where((item) => item.status == CommitmentStatus.active),
+        hasLength(1),
+      );
+      await expectLater(
+        repo.update(commitments.first.id, {
+          'status': CommitmentStatus.active.wire,
+        }),
+        throwsStateError,
+      );
+      await repo.close();
+    },
+  );
+
   test('downgrade keeps open attempts then pauses extra commitments', () async {
     var now = DateTime.utc(2026, 9, 8, 2);
     final prefs = await SharedPreferences.getInstance();

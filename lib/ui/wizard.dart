@@ -8,6 +8,7 @@ import '../models/enums.dart';
 import '../platform/alarm_channel.dart';
 import '../platform/overlay_channel.dart';
 import '../platform/places_channel.dart';
+import '../platform/health_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../platform/blocker_channel.dart';
 import '../services/controller.dart';
@@ -15,6 +16,7 @@ import '../verification/verifier_registry.dart';
 import 'app.dart';
 import 'widgets.dart';
 import 'screens.dart';
+import 'coach_marks.dart';
 
 class CommitmentWizard extends ConsumerStatefulWidget {
   const CommitmentWizard({super.key, this.existing});
@@ -23,16 +25,22 @@ class CommitmentWizard extends ConsumerStatefulWidget {
   ConsumerState<CommitmentWizard> createState() => _CommitmentWizardState();
 }
 
-class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
+class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
+    with WidgetsBindingObserver {
   final title = TextEditingController(),
       lat = TextEditingController(),
       lng = TextEditingController(),
       label = TextEditingController(),
-      zone = TextEditingController();
+      zone = TextEditingController(),
+      username = TextEditingController(),
+      appSearch = TextEditingController();
   String? placeId, placeAddress;
   int page = 0,
       walkMinutes = 15,
       walkDistanceM = 1000,
+      focusMinutes = 25,
+      workoutMinutes = 30,
+      targetAccepted = 1,
       interval = 20,
       maxReminders = 6;
   WalkGoalMode walkMode = WalkGoalMode.duration;
@@ -45,6 +53,12 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   final Set<String> selectedPackages = {};
   bool loadingApps = false;
   VerifierType type = VerifierType.walk;
+  CommitmentKind kind = CommitmentKind.walk;
+  String workoutType = 'any';
+  AlarmPermissionStatus? alarmPermissions;
+  HealthAvailability? healthAvailability;
+  final _presetTutorialKey = GlobalKey();
+  final _guardrailTutorialKey = GlobalKey();
   Set<int> days = {1, 2, 3, 4, 5};
   final Map<int, TimeOfDay> dayStarts = {};
   final Map<int, TimeOfDay> dayEnds = {};
@@ -53,11 +67,13 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final c = widget.existing;
     if (c != null) {
       type = c.verifierType == VerifierType.steps
           ? VerifierType.walk
           : c.verifierType;
+      kind = c.kind;
       days = c.schedule.daysOfWeek.toSet();
       start = _time(c.schedule.windowStartLocal);
       end = _time(c.schedule.windowEndLocal);
@@ -90,19 +106,40 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         placeId = cfg.placeId;
         placeAddress = cfg.address;
       }
+      if (cfg is FocusConfig) {
+        focusMinutes = cfg.targetDurationMs ~/ 60000;
+        selectedPackages.addAll(cfg.packages);
+      }
+      if (cfg is HealthWorkoutConfig) {
+        workoutMinutes = cfg.targetDurationMs ~/ 60000;
+        workoutType = cfg.activityType;
+      }
+      if (cfg is LeetCodeConfig) {
+        username.text = cfg.username;
+        targetAccepted = cfg.targetAccepted;
+      }
       title.text = _presetTitle;
     } else {
       title.text = 'Morning walk';
       zone.text = ref.read(appProvider).user?.timezone ?? 'Asia/Kolkata';
+      _restoreGuardrailProfile();
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshReadiness());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showPresetTutorial());
   }
 
   @override
   void dispose() {
-    for (final c in [title, lat, lng, label, zone]) {
+    WidgetsBinding.instance.removeObserver(this);
+    for (final c in [title, lat, lng, label, zone, username, appSearch]) {
       c.dispose();
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshReadiness();
   }
 
   TimeOfDay _time(String s) => TimeOfDay(
@@ -111,15 +148,20 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   );
   String _clock(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-  String get _presetTitle => switch (type) {
-    VerifierType.location => 'Gym session',
-    VerifierType.walk when walkMode == WalkGoalMode.duration =>
+  String get _presetTitle => switch (kind) {
+    CommitmentKind.gym => 'Gym session',
+    CommitmentKind.arrive =>
+      'Arrive at ${label.text.isEmpty ? 'my place' : label.text}',
+    CommitmentKind.focus => 'Focus for $focusMinutes minutes',
+    CommitmentKind.workout => 'Workout for $workoutMinutes minutes',
+    CommitmentKind.leetcode =>
+      'Solve $targetAccepted LeetCode problem${targetAccepted == 1 ? '' : 's'}',
+    CommitmentKind.walk when walkMode == WalkGoalMode.duration =>
       'Walk for $walkMinutes minutes',
-    VerifierType.walk when walkMode == WalkGoalMode.distance =>
+    CommitmentKind.walk when walkMode == WalkGoalMode.distance =>
       'Walk ${(walkDistanceM / 1000).toStringAsFixed(walkDistanceM % 1000 == 0 ? 0 : 2)} km',
-    VerifierType.walk =>
+    CommitmentKind.walk =>
       'Walk to ${label.text.isEmpty ? 'my destination' : label.text}',
-    VerifierType.steps => 'Morning walk',
   };
   String get _goalSummary => switch (config) {
     WalkConfig(mode: WalkGoalMode.duration) => '$walkMinutes active minutes',
@@ -129,7 +171,13 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       'Arrive within 150 m of ${label.text.isEmpty ? 'your destination' : label.text}',
     StepsConfig(:final targetSteps) => '$targetSteps new steps',
     LocationConfig() =>
-      'Stay near ${label.text.isEmpty ? 'your gym' : label.text} for 5 minutes',
+      'Stay near ${label.text.isEmpty ? 'your place' : label.text} for ${kind == CommitmentKind.gym ? 5 : 2} minutes',
+    FocusConfig() =>
+      '$focusMinutes uninterrupted minutes away from ${selectedPackages.length} selected app${selectedPackages.length == 1 ? '' : 's'}',
+    HealthWorkoutConfig() =>
+      '$workoutMinutes sensor-recorded Health Connect minutes',
+    LeetCodeConfig() =>
+      '$targetAccepted unique accepted problem${targetAccepted == 1 ? '' : 's'} on @${username.text.trim()}',
   };
   VerifierConfig get config => switch (type) {
     VerifierType.walk => WalkConfig(
@@ -146,12 +194,24 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       lat: double.tryParse(lat.text) ?? double.nan,
       lng: double.tryParse(lng.text) ?? double.nan,
       radiusM: 150,
-      dwellMs: 5 * 60000,
+      dwellMs: (kind == CommitmentKind.gym ? 5 : 2) * 60000,
       label: label.text.trim(),
       placeId: placeId,
       address: placeAddress,
     ),
     VerifierType.steps => const StepsConfig(targetSteps: 1000),
+    VerifierType.focus => FocusConfig(
+      packages: selectedPackages.toList()..sort(),
+      targetDurationMs: focusMinutes * 60000,
+    ),
+    VerifierType.healthWorkout => HealthWorkoutConfig(
+      activityType: workoutType,
+      targetDurationMs: workoutMinutes * 60000,
+    ),
+    VerifierType.leetcode => LeetCodeConfig(
+      username: username.text.trim(),
+      targetAccepted: targetAccepted,
+    ),
   };
   CommitmentSchedule get schedule {
     final isPro = ref.read(appProvider).user?.isPro == true;
@@ -179,48 +239,39 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   Future<void> next() async {
     setState(() => error = null);
     if (page == 0) {
-      if (config.validate() != null) {
-        setState(() => error = config.validate());
+      final configError = type == VerifierType.focus && selectedPackages.isEmpty
+          ? null
+          : config.validate();
+      final validation =
+          configError ??
+          schedule.validate() ??
+          ReminderConfig(
+            intervalMinutes: interval,
+            volumeMode: loud ? VolumeMode.loud : VolumeMode.gentle,
+            maxReminders: maxReminders,
+          ).validate();
+      if (validation != null) {
+        setState(() => error = validation);
         return;
       }
-    }
-    if (page == 1 && schedule.validate() != null) {
-      setState(() => error = schedule.validate());
+      setState(() => page = 1);
+      if (type == VerifierType.focus ||
+          ref.read(appProvider).user?.isPro == true) {
+        await _loadBlockableApps();
+      }
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _showGuardrailTutorial(),
+      );
       return;
     }
-    if (page == 2 && !ref.read(appProvider).preview) {
-      var permissions = await AlarmChannel.getPermissionStatus();
-      if (!permissions.notifications) {
-        await AlarmChannel.requestPermission('notifications');
-        permissions = await AlarmChannel.getPermissionStatus();
-      }
-      if (!permissions.notifications || !permissions.exactAlarm) {
-        setState(
-          () => error = !permissions.notifications
-              ? 'Allow notifications before saving. Without them, ShowdUp cannot remind you.'
-              : 'Enable exact reminders in Android settings before saving. Without them, Android may delay the recurring reminders you chose.',
-        );
-        return;
-      }
+    if (type == VerifierType.focus && selectedPackages.isEmpty) {
+      setState(
+        () => error = 'Choose at least one distracting app for Focus proof.',
+      );
+      return;
     }
-    final isPro = ref.read(appProvider).user?.isPro == true;
-    if (page == 3 && isPro && restrictionsEnabled) {
-      if (selectedPackages.isEmpty) {
-        setState(() => error = 'Choose at least one distracting app.');
-        return;
-      }
-      final status = await BlockerChannel.status();
-      if (!status.accessibilityEnabled) {
-        setState(
-          () => error =
-              'Enable ShowdUp accessibility access so it can detect and cover only the apps you selected.',
-        );
-        return;
-      }
-    }
-    if (page < 4) {
-      setState(() => page++);
-      if (page == 3 && isPro) await _loadBlockableApps();
+    if (restrictionsEnabled && selectedPackages.isEmpty) {
+      setState(() => error = 'Choose at least one distracting app.');
       return;
     }
     await save();
@@ -231,21 +282,18 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     final app = ref.read(appProvider);
     final firstCommitment = widget.existing == null && app.commitments.isEmpty;
     try {
+      var shouldActivate = true;
       if (!app.preview) {
+        final permissions = await AlarmChannel.getPermissionStatus();
+        alarmPermissions = permissions;
+        shouldActivate = permissions.notifications && permissions.exactAlarm;
         final verifier = VerifierRegistry().create(type);
         final availability = await verifier.checkAvailability(config);
-        if (!availability.available) {
-          setState(
-            () => error =
-                availability.reason ??
-                'Check required permissions before saving.',
-          );
-          return;
-        }
+        shouldActivate = shouldActivate && availability.available;
       }
       final data = {
         'title': _presetTitle,
-        'kind': type == VerifierType.location ? 'gym' : 'walk',
+        'kind': kind.wire,
         'verifierType': type.wire,
         'verifierConfig': config.toJson(),
         'schedule': schedule.toJson(),
@@ -254,6 +302,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
           volumeMode: loud ? VolumeMode.loud : VolumeMode.gentle,
           maxReminders: maxReminders,
         ).toJson(),
+        'status': shouldActivate
+            ? CommitmentStatus.active.wire
+            : CommitmentStatus.draft.wire,
         'restrictions': Restrictions(
           enabled: app.user?.isPro == true && restrictionsEnabled,
           packages: app.user?.isPro == true
@@ -261,19 +312,91 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               : const [],
         ).toJson(),
       };
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        'guardrails.lastPackages.v1',
+        selectedPackages.toList()..sort(),
+      );
       if (widget.existing == null) {
         await app.repository.create(data);
       } else {
         await app.repository.update(widget.existing!.id, data);
       }
       await app.refresh();
-      if (firstCommitment && mounted) await _offerOverlay();
+      if (firstCommitment && shouldActivate && mounted) await _offerOverlay();
+      if (!shouldActivate && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Saved as a draft. Finish the required Android access to activate reminders.',
+            ),
+          ),
+        );
+      }
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) setState(() => error = friendlyError(e));
     } finally {
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  Future<void> _restoreGuardrailProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted || selectedPackages.isNotEmpty) return;
+    setState(() {
+      selectedPackages.addAll(
+        prefs.getStringList('guardrails.lastPackages.v1') ?? const [],
+      );
+    });
+  }
+
+  Future<void> _refreshReadiness() async {
+    if (ref.read(appProvider).preview) return;
+    try {
+      final value = await AlarmChannel.getPermissionStatus();
+      HealthAvailability? health;
+      if (type == VerifierType.healthWorkout) {
+        health = await HealthChannel.availability();
+      }
+      if (mounted) {
+        setState(() {
+          alarmPermissions = value;
+          if (health != null) healthAvailability = health;
+        });
+      }
+    } on MissingPluginException {
+      // Widget tests and non-Android previews do not expose Android settings.
+    }
+  }
+
+  Future<void> _showPresetTutorial() async {
+    if (ref.read(appProvider).preview) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted || prefs.getBool('tutorial.wizard.v1') == true) return;
+    await showCoachMarks(context, [
+      CoachMarkStep(
+        target: _presetTutorialKey,
+        title: 'Start with proof',
+        body:
+            'Every preset defines exactly what the phone can verify. Then choose days, the commitment window and alarm readiness on this same screen.',
+      ),
+    ]);
+  }
+
+  Future<void> _showGuardrailTutorial() async {
+    if (ref.read(appProvider).preview) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted || prefs.getBool('tutorial.wizard.v1') == true) return;
+    await showCoachMarks(context, [
+      CoachMarkStep(
+        target: _guardrailTutorialKey,
+        title: 'You control the guardrails',
+        body:
+            'Select or uncheck every distracting app yourself. Focus proof is free; actively covering those apps is a Pro option.',
+      ),
+    ]);
+    await prefs.setBool('tutorial.wizard.v1', true);
   }
 
   Future<void> _offerOverlay() async {
@@ -331,7 +454,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       if (p != null) {
         lat.text = (p['lat'] as num).toStringAsFixed(6);
         lng.text = (p['lng'] as num).toStringAsFixed(6);
-        label.text = 'My gym';
+        label.text = kind == CommitmentKind.gym ? 'My gym' : 'My destination';
         placeId = null;
         placeAddress = 'Pinned from your current location';
       }
@@ -349,7 +472,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     });
     try {
       final place = await PlacesChannel.pickPlace(
-        initialQuery: type == VerifierType.location ? 'gym' : '',
+        initialQuery: kind == CommitmentKind.gym ? 'gym' : '',
       );
       if (place == null || !mounted) return;
       setState(() {
@@ -383,7 +506,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: Row(
                 children: List.generate(
-                  5,
+                  2,
                   (i) => Expanded(
                     child: Container(
                       height: 4,
@@ -401,15 +524,12 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               child: ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
-                  Eyebrow('Step ${page + 1} of 5'),
+                  Eyebrow('Step ${page + 1} of 2'),
                   const SizedBox(height: 12),
                   Text(
                     [
-                      'Choose your finish line.',
-                      'Give it a place in your day.',
-                      'Reminders, on your terms.',
-                      'Choose your guardrails.',
-                      'This is your promise.',
+                      'Set the finish line.',
+                      'Guardrails and confirmation.',
                     ][page],
                     style: const TextStyle(
                       fontSize: 32,
@@ -420,18 +540,27 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                   ),
                   const SizedBox(height: 24),
                   ...switch (page) {
-                    0 => _goal(),
-                    1 => _schedule(),
-                    2 => _reminders(),
-                    3 => _restrictions(),
-                    _ => _review(),
+                    0 => _setup(),
+                    _ => [
+                      KeyedSubtree(
+                        key: _guardrailTutorialKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ..._restrictions(),
+                            const SizedBox(height: 28),
+                            ..._review(),
+                          ],
+                        ),
+                      ),
+                    ],
                   },
                   if (error != null) ...[
                     const SizedBox(height: 18),
                     ErrorNotice(error!),
                     if (!ref.read(appProvider).preview)
                       TextButton(
-                        onPressed: page == 3
+                        onPressed: page == 1
                             ? BlockerChannel.openAccessibilitySettings
                             : () => Navigator.push(
                                 context,
@@ -440,7 +569,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                                 ),
                               ),
                         child: Text(
-                          page == 3
+                          page == 1
                               ? 'Open accessibility settings'
                               : 'Open permissions & reliability',
                         ),
@@ -468,7 +597,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
                         child: Text(
                           busy
                               ? 'Saving…'
-                              : page == 4
+                              : page == 1
                               ? widget.existing == null
                                     ? 'I’m showing up  →'
                                     : 'Save changes'
@@ -486,6 +615,20 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       ),
     ),
   );
+  List<Widget> _setup() => [
+    ..._goal(),
+    const SizedBox(height: 30),
+    const Divider(),
+    const SizedBox(height: 24),
+    ..._schedule(),
+    const SizedBox(height: 30),
+    const Divider(),
+    const SizedBox(height: 24),
+    ..._reminders(),
+    const SizedBox(height: 24),
+    _readinessCard(),
+  ];
+
   List<Widget> _goal() => [
     const Text(
       'Every option below is completed by evidence from your phone. There is no manual “done” button.',
@@ -494,50 +637,31 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     const SizedBox(height: 20),
     const Eyebrow('Choose a verified preset'),
     const SizedBox(height: 14),
-    Row(
+    Wrap(
+      key: _presetTutorialKey,
+      spacing: 10,
+      runSpacing: 10,
       children: [
-        Expanded(
-          child: _typeCard(VerifierType.walk, Icons.directions_walk, 'Walk'),
+        _typeCard(CommitmentKind.walk, Icons.directions_run, 'Walk / run'),
+        _typeCard(CommitmentKind.gym, Icons.fitness_center, 'Gym'),
+        _typeCard(CommitmentKind.arrive, Icons.place_outlined, 'Arrive'),
+        _typeCard(CommitmentKind.focus, Icons.center_focus_strong, 'Focus'),
+        _typeCard(
+          CommitmentKind.workout,
+          Icons.health_and_safety_outlined,
+          'Workout',
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _typeCard(VerifierType.location, Icons.fitness_center, 'Gym'),
-        ),
+        _typeCard(CommitmentKind.leetcode, Icons.code_rounded, 'LeetCode'),
       ],
     ),
-    const SizedBox(height: 12),
-    Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: T.surface.withValues(alpha: .65),
-        borderRadius: BorderRadius.circular(T.radius),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.code_rounded, color: T.muted),
-          SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('LeetCode', style: TextStyle(fontWeight: FontWeight.w700)),
-                SizedBox(height: 3),
-                Text(
-                  'Waiting for a stable authorized account integration',
-                  style: TextStyle(color: T.muted, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Text('SOON', style: TextStyle(color: T.muted, fontSize: 10)),
-        ],
-      ),
-    ),
     const SizedBox(height: 24),
-    if (type == VerifierType.walk) ...[
+    if (kind == CommitmentKind.walk) ...[
       Wrap(
         spacing: 8,
         children: WalkGoalMode.values
+            .where(
+              (mode) => mode != WalkGoalMode.destination || walkMode == mode,
+            )
             .map(
               (mode) => ChoiceChip(
                 label: Text(switch (mode) {
@@ -635,11 +759,11 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         },
       ),
       const SizedBox(height: 16),
-      const Text(
+      Text(
         'Foreground GPS counts only plausible movement with a precise, non-mock fix. Keep the phone with you and open ShowdUp to start.',
         style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
       ),
-    ] else ...[
+    ] else if (kind == CommitmentKind.gym || kind == CommitmentKind.arrive) ...[
       Panel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -647,7 +771,11 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
             const Icon(Icons.location_searching, color: T.accent, size: 28),
             const SizedBox(height: 14),
             Text(
-              label.text.isEmpty ? 'Choose your gym' : label.text,
+              label.text.isEmpty
+                  ? kind == CommitmentKind.gym
+                        ? 'Choose your gym'
+                        : 'Choose where you must arrive'
+                  : label.text,
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
             ),
             if (placeAddress?.isNotEmpty == true) ...[
@@ -666,7 +794,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
               onPressed: busy ? null : pickGym,
               icon: const Icon(Icons.search),
               label: Text(
-                label.text.isEmpty ? 'Search gyms and places' : 'Change gym',
+                label.text.isEmpty ? 'Search places' : 'Change place',
               ),
             ),
             const SizedBox(height: 8),
@@ -679,39 +807,236 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         ),
       ),
       const SizedBox(height: 14),
+      Text(
+        'ShowdUp uses a fixed 150 m boundary and verifies after a continuous ${kind == CommitmentKind.gym ? 5 : 2}-minute stay. Coordinates and radius are never shown or editable.',
+        style: const TextStyle(color: T.muted, fontSize: 13, height: 1.6),
+      ),
+    ] else if (kind == CommitmentKind.focus) ...[
+      _durationPanel(
+        label: 'Uninterrupted focus',
+        minutes: focusMinutes,
+        min: 5,
+        max: 180,
+        onChanged: (value) => setState(() => focusMinutes = value),
+      ),
+      const SizedBox(height: 12),
       const Text(
-        'ShowdUp uses a fixed 150 m boundary and verifies after 5 continuous minutes nearby. Coordinates and radius are never shown or editable.',
+        'Choose distracting apps on the next step. Ten continuous seconds in one resets the timer; Pro blocks it immediately.',
+        style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
+      ),
+    ] else if (kind == CommitmentKind.workout) ...[
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: HealthWorkoutConfig.supported
+            .map(
+              (value) => ChoiceChip(
+                label: Text(
+                  value == 'any'
+                      ? 'Any workout'
+                      : value[0].toUpperCase() + value.substring(1),
+                ),
+                selected: workoutType == value,
+                onSelected: (_) => setState(() => workoutType = value),
+              ),
+            )
+            .toList(),
+      ),
+      const SizedBox(height: 14),
+      _durationPanel(
+        label: 'Sensor-recorded workout',
+        minutes: workoutMinutes,
+        min: 10,
+        max: 180,
+        onChanged: (value) => setState(() => workoutMinutes = value),
+      ),
+      const SizedBox(height: 12),
+      const Text(
+        'Only actively or automatically recorded Health Connect sessions count. Manual and unknown records are excluded.',
+        style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
+      ),
+    ] else if (kind == CommitmentKind.leetcode) ...[
+      TextField(
+        controller: username,
+        autocorrect: false,
+        decoration: const InputDecoration(
+          labelText: 'Public LeetCode username',
+          helperText: 'ShowdUp never asks for your password or session cookie.',
+        ),
+      ),
+      const SizedBox(height: 16),
+      Panel(
+        child: Column(
+          children: [
+            Text(
+              '$targetAccepted accepted problem${targetAccepted == 1 ? '' : 's'}',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            ),
+            Slider(
+              value: targetAccepted.toDouble(),
+              min: 1,
+              max: 10,
+              divisions: 9,
+              onChanged: (value) =>
+                  setState(() => targetAccepted = value.round()),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      const Text(
+        'Verification reads recent accepted submissions from your public profile. If LeetCode is unavailable, the attempt is marked unable to verify—not missed.',
         style: TextStyle(color: T.muted, fontSize: 13, height: 1.6),
       ),
     ],
   ];
-  Widget _typeCard(VerifierType value, IconData icon, String label) => InkWell(
-    onTap: () => setState(() {
-      type = value;
-      title.text = _presetTitle;
-    }),
-    borderRadius: BorderRadius.circular(20),
-    child: Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: type == value ? T.accent.withValues(alpha: .10) : T.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: type == value ? T.accent : Colors.transparent,
-        ),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: type == value ? T.accent : T.muted, size: 30),
-          const SizedBox(height: 12),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+  Widget _typeCard(
+    CommitmentKind value,
+    IconData icon,
+    String label,
+  ) => SizedBox(
+    width: 150,
+    child: InkWell(
+      onTap: () => setState(() {
+        kind = value;
+        type = switch (value) {
+          CommitmentKind.walk => VerifierType.walk,
+          CommitmentKind.gym || CommitmentKind.arrive => VerifierType.location,
+          CommitmentKind.focus => VerifierType.focus,
+          CommitmentKind.workout => VerifierType.healthWorkout,
+          CommitmentKind.leetcode => VerifierType.leetcode,
+        };
+        title.text = _presetTitle;
+        _refreshReadiness();
+      }),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: kind == value ? T.accent.withValues(alpha: .10) : T.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: kind == value ? T.accent : Colors.transparent,
           ),
-        ],
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: kind == value ? T.accent : T.muted, size: 30),
+            const SizedBox(height: 12),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
       ),
     ),
   );
+
+  Widget _durationPanel({
+    required String label,
+    required int minutes,
+    required int min,
+    required int max,
+    required ValueChanged<int> onChanged,
+  }) => Panel(
+    child: Column(
+      children: [
+        Eyebrow(label),
+        const SizedBox(height: 10),
+        Text(
+          '$minutes min',
+          style: const TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.w800,
+            color: T.accent,
+          ),
+        ),
+        Slider(
+          value: minutes.toDouble(),
+          min: min.toDouble(),
+          max: max.toDouble(),
+          divisions: (max - min) ~/ 5,
+          onChanged: (value) => onChanged((value / 5).round() * 5),
+        ),
+      ],
+    ),
+  );
+
+  Widget _readinessCard() {
+    final preview = ref.read(appProvider).preview;
+    final permission = alarmPermissions;
+    final rows = <Widget>[
+      _readinessRow(
+        'Notifications',
+        preview || permission?.notifications == true,
+        () async {
+          await AlarmChannel.requestPermission('notifications');
+          await _refreshReadiness();
+        },
+      ),
+      _readinessRow(
+        'Exact reminders',
+        preview || permission?.exactAlarm == true,
+        () async {
+          await AlarmChannel.requestPermission('exactAlarm');
+          await _refreshReadiness();
+        },
+      ),
+    ];
+    if (type == VerifierType.walk || type == VerifierType.location) {
+      rows.add(
+        _readinessRow(
+          'Precise location',
+          preview || permission?.location == true,
+          () async {
+            await AlarmChannel.requestPermission('location');
+            await _refreshReadiness();
+          },
+        ),
+      );
+    }
+    if (type == VerifierType.healthWorkout) {
+      rows.add(
+        _readinessRow(
+          'Health Connect exercise + background access',
+          preview || healthAvailability?.permissionsGranted == true,
+          () async {
+            await HealthChannel.requestPermissions();
+            await _refreshReadiness();
+          },
+        ),
+      );
+    }
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Eyebrow('Alarm readiness'),
+          const SizedBox(height: 8),
+          const Text(
+            'Missing required access saves this setup as a draft. Nothing is scheduled until it is ready.',
+            style: TextStyle(color: T.muted, fontSize: 12, height: 1.5),
+          ),
+          const SizedBox(height: 12),
+          ...rows,
+        ],
+      ),
+    );
+  }
+
+  Widget _readinessRow(String label, bool ready, Future<void> Function() fix) =>
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          ready ? Icons.check_circle : Icons.warning_amber_rounded,
+          color: ready ? T.ok : T.accent,
+        ),
+        title: Text(label),
+        trailing: ready
+            ? const Text('Ready', style: TextStyle(color: T.ok, fontSize: 12))
+            : TextButton(onPressed: fix, child: const Text('Enable')),
+      );
   List<Widget> _schedule() {
     final isPro = ref.read(appProvider).user?.isPro == true;
     return [
@@ -937,7 +1262,8 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
   ];
   List<Widget> _restrictions() {
     final isPro = ref.read(appProvider).user?.isPro == true;
-    if (!isPro) {
+    final focusProof = type == VerifierType.focus;
+    if (!isPro && !focusProof) {
       return [
         const Panel(
           child: Column(
@@ -973,23 +1299,40 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
       ];
     }
     return [
-      SwitchListTile(
-        contentPadding: const EdgeInsets.all(12),
-        title: const Text('Block selected distractions'),
-        subtitle: const Text(
-          'ShowdUp observes the foreground app only while a restriction is active. It does not read typed text or screen contents.',
-          style: TextStyle(color: T.muted, fontSize: 12, height: 1.5),
+      if (focusProof) ...[
+        const Text(
+          'Choose the apps that reset your uninterrupted Focus timer. Window contents, passwords and typed text are never read.',
+          style: TextStyle(color: T.muted, height: 1.6),
         ),
-        value: restrictionsEnabled,
-        onChanged: (value) async {
-          setState(() => restrictionsEnabled = value);
-          if (value) await _loadBlockableApps();
-        },
-      ),
-      if (restrictionsEnabled) ...[
         const SizedBox(height: 12),
-        const ErrorNotice(
-          'Accessibility access lets ShowdUp notice when a selected app opens and place a blocking screen over it. You can disable access or uninstall ShowdUp at any time.',
+        OutlinedButton.icon(
+          onPressed: BlockerChannel.openAccessibilitySettings,
+          icon: const Icon(Icons.accessibility_new),
+          label: const Text('Check accessibility access'),
+        ),
+      ],
+      if (isPro)
+        SwitchListTile(
+          contentPadding: const EdgeInsets.all(12),
+          title: const Text('Block selected distractions'),
+          subtitle: Text(
+            focusProof
+                ? 'Pro covers a selected app immediately, before it can reset your Focus timer.'
+                : 'ShowdUp covers only the apps you choose during this commitment window.',
+            style: const TextStyle(color: T.muted, fontSize: 12, height: 1.5),
+          ),
+          value: restrictionsEnabled,
+          onChanged: (value) async {
+            setState(() => restrictionsEnabled = value);
+            if (value) await _loadBlockableApps();
+          },
+        ),
+      if (focusProof || restrictionsEnabled) ...[
+        const SizedBox(height: 12),
+        ErrorNotice(
+          focusProof && !isPro
+              ? 'Accessibility access reports only which foreground app opened. It resets the timer after ten seconds and never reads the app’s contents.'
+              : 'Accessibility access lets ShowdUp notice when a selected app opens and place a blocking screen over it. You can disable access at any time.',
         ),
         const SizedBox(height: 16),
         if (loadingApps)
@@ -1001,24 +1344,41 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
             label: const Text('Load installed apps'),
           )
         else
-          ...blockableApps.map(
-            (app) => CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: selectedPackages.contains(app.packageName),
-              title: Text(app.label),
-              subtitle: Text(
-                app.packageName,
-                style: const TextStyle(color: T.muted, fontSize: 10),
-              ),
-              onChanged: (selected) => setState(() {
-                if (selected == true) {
-                  selectedPackages.add(app.packageName);
-                } else {
-                  selectedPackages.remove(app.packageName);
-                }
-              }),
+          TextField(
+            controller: appSearch,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              labelText: 'Search installed apps',
             ),
           ),
+        if (blockableApps.isNotEmpty) const SizedBox(height: 10),
+        if (blockableApps.isNotEmpty)
+          ...blockableApps
+              .where((app) {
+                final query = appSearch.text.trim().toLowerCase();
+                return query.isEmpty ||
+                    app.label.toLowerCase().contains(query) ||
+                    app.packageName.toLowerCase().contains(query);
+              })
+              .map(
+                (app) => CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: selectedPackages.contains(app.packageName),
+                  title: Text(app.label),
+                  subtitle: Text(
+                    app.packageName,
+                    style: const TextStyle(color: T.muted, fontSize: 10),
+                  ),
+                  onChanged: (selected) => setState(() {
+                    if (selected == true) {
+                      selectedPackages.add(app.packageName);
+                    } else {
+                      selectedPackages.remove(app.packageName);
+                    }
+                  }),
+                ),
+              ),
       ],
     ];
   }
@@ -1029,9 +1389,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            type == VerifierType.location
-                ? Icons.fitness_center
-                : Icons.directions_walk,
+            switch (kind) {
+              CommitmentKind.gym => Icons.fitness_center,
+              CommitmentKind.arrive => Icons.place_outlined,
+              CommitmentKind.focus => Icons.center_focus_strong,
+              CommitmentKind.workout => Icons.health_and_safety_outlined,
+              CommitmentKind.leetcode => Icons.code_rounded,
+              _ => Icons.directions_run,
+            },
             color: T.accent,
             size: 34,
           ),
@@ -1086,7 +1451,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard> {
     if (type == VerifierType.location) ...[
       const SizedBox(height: 16),
       const Text(
-        'Remember to open ShowdUp or tap a reminder. Location verification cannot start until you do.',
+        'Location verification starts when you open ShowdUp or when the first reminder fires, with an Android foreground notification.',
         style: TextStyle(color: T.accent, height: 1.6, fontSize: 13),
       ),
     ],

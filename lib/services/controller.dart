@@ -76,6 +76,7 @@ class AppController extends ChangeNotifier {
   Future<void> refresh() async {
     try {
       if (repository is LocalRepository) {
+        await _activateReadyDrafts(repository as LocalRepository);
         await _recoverNativeCompletions(repository as LocalRepository);
         await _recoverNativeFailures(repository as LocalRepository);
         await _recoverNativeReminderCounts(repository as LocalRepository);
@@ -87,6 +88,34 @@ class AppController extends ChangeNotifier {
       _error(e);
     }
     notifyListeners();
+  }
+
+  Future<void> _activateReadyDrafts(LocalRepository local) async {
+    final drafts = commitments
+        .where((item) => item.status == CommitmentStatus.draft)
+        .toList();
+    if (drafts.isEmpty) return;
+    try {
+      final alarms = await AlarmChannel.getPermissionStatus();
+      if (!alarms.notifications || !alarms.exactAlarm) return;
+      for (final commitment in drafts) {
+        final verifier = VerifierRegistry().create(commitment.verifierType);
+        final available = await verifier.checkAvailability(
+          commitment.verifierConfig,
+        );
+        if (!available.available) continue;
+        try {
+          await local.update(commitment.id, {
+            'status': CommitmentStatus.active.wire,
+          });
+        } on StateError {
+          // The free active-commitment limit may leave additional drafts waiting.
+          return;
+        }
+      }
+    } on MissingPluginException {
+      // Non-Android tests do not expose native permissions.
+    }
   }
 
   Future<void> _recoverNativeExpirations(LocalRepository repository) async {
@@ -184,14 +213,15 @@ class AppController extends ChangeNotifier {
     if (local is! LocalRepository || !SocialService.instance.googleLinked) {
       return;
     }
-    final terminal =
-        attempts.where((attempt) {
-          final now = DateTime.now();
-          final monday = DateTime(now.year, now.month, now.day)
-              .subtract(Duration(days: now.weekday - 1));
-          return attempt.state.isTerminal && !attempt.windowEndAt.isBefore(monday);
-        }).toList()
-          ..sort((a, b) => a.windowEndAt.compareTo(b.windowEndAt));
+    final terminal = attempts.where((attempt) {
+      final now = DateTime.now();
+      final monday = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).subtract(Duration(days: now.weekday - 1));
+      return attempt.state.isTerminal && !attempt.windowEndAt.isBefore(monday);
+    }).toList()..sort((a, b) => a.windowEndAt.compareTo(b.windowEndAt));
     for (final attempt in terminal) {
       if (local.isSocialOutcomeSynced(attempt.id)) continue;
       try {

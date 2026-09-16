@@ -11,6 +11,7 @@ import 'package:showdup/services/controller.dart';
 import 'package:showdup/services/repository.dart';
 import 'package:showdup/ui/app.dart';
 import 'package:showdup/ui/screens.dart';
+import 'package:showdup/ui/wizard.dart';
 
 void main() {
   setUpAll(tz.initializeTimeZones);
@@ -112,6 +113,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Create a commitment  +'), findsOneWidget);
     expect(tester.takeException(), isNull, reason: 'screen overflow');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+  testWidgets('commitment setup is two steps and exposes verified presets', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final prefs = await SharedPreferences.getInstance();
+    final controller = AppController(PreviewRepository(prefs));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(theme: buildTheme(), home: const CommitmentWizard()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('STEP 1 OF 2'), findsOneWidget);
+    for (final preset in [
+      'Walk / run',
+      'Gym',
+      'Arrive',
+      'Focus',
+      'Workout',
+      'LeetCode',
+    ]) {
+      expect(find.text(preset), findsOneWidget);
+    }
+    await tester.ensureVisible(find.text('Continue  →'));
+    await tester.tap(find.text('Continue  →'));
+    await tester.pumpAndSettle();
+    expect(find.text('STEP 2 OF 2'), findsOneWidget);
+    expect(find.text('Guardrails and confirmation.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
   });

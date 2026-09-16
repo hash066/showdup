@@ -63,20 +63,31 @@ class LocationVerifier implements Verifier {
                 _previous != null) {
               _satisfied = true;
               _events.add(
-                VerificationSignal.satisfied({
-                  'lat': fix.lat,
-                  'lng': fix.lng,
-                  'accuracyM': fix.accuracyM,
-                  'isMock': fix.isMock,
-                  'epochMs': fix.epochMs,
-                  'dwellMs': e.dwellMs,
-                  'enteredAt': fix.epochMs - e.dwellMs,
-                  'previousFix': {
-                    'lat': _previous!.lat,
-                    'lng': _previous!.lng,
-                    'epochMs': _previous!.epochMs,
-                  },
-                }),
+                VerificationSignal.satisfied(
+                  evidenceEnvelope(
+                    verifier: type,
+                    source: 'android_fused_location',
+                    integrityFlags: const [
+                      'non_mock',
+                      'fresh_fix',
+                      'continuous_dwell',
+                    ],
+                    details: {
+                      'lat': fix.lat,
+                      'lng': fix.lng,
+                      'accuracyM': fix.accuracyM,
+                      'isMock': fix.isMock,
+                      'epochMs': fix.epochMs,
+                      'dwellMs': e.dwellMs,
+                      'enteredAt': fix.epochMs - e.dwellMs,
+                      'previousFix': {
+                        'lat': _previous!.lat,
+                        'lng': _previous!.lng,
+                        'epochMs': _previous!.epochMs,
+                      },
+                    },
+                  ),
+                ),
               );
             } else if (!_satisfied) {
               _events.add(

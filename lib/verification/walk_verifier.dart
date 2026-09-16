@@ -58,18 +58,29 @@ class WalkVerifier implements Verifier {
           if (event.type == 'walk_satisfied' && !_satisfied) {
             _satisfied = true;
             _events.add(
-              VerificationSignal.satisfied({
-                'mode': walk.mode.wire,
-                'distanceM': event.distanceM,
-                'activeDurationMs': event.dwellMs,
-                if (event.fix != null) ...{
-                  'lat': event.fix!.lat,
-                  'lng': event.fix!.lng,
-                  'accuracyM': event.fix!.accuracyM,
-                  'isMock': event.fix!.isMock,
-                  'epochMs': event.fix!.epochMs,
-                },
-              }),
+              VerificationSignal.satisfied(
+                evidenceEnvelope(
+                  verifier: type,
+                  source: 'android_fused_location',
+                  integrityFlags: const [
+                    'non_mock',
+                    'plausible_speed',
+                    'fresh_fix',
+                  ],
+                  details: {
+                    'mode': walk.mode.wire,
+                    'distanceM': event.distanceM,
+                    'activeDurationMs': event.dwellMs,
+                    if (event.fix != null) ...{
+                      'lat': event.fix!.lat,
+                      'lng': event.fix!.lng,
+                      'accuracyM': event.fix!.accuracyM,
+                      'isMock': event.fix!.isMock,
+                      'epochMs': event.fix!.epochMs,
+                    },
+                  },
+                ),
+              ),
             );
           } else if (!_satisfied) {
             _events.add(

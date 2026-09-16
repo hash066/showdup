@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="ShowdUp privacy policy, effective 12 September 2026.">
+  <meta name="description" content="ShowdUp privacy policy, effective 16 September 2026.">
   <title>Privacy Policy · ShowdUp</title>
   <style>
     :root { color-scheme:dark; --ink:#f7f1e8; --muted:#b8c1d8; --accent:#ff8a4c; --bg:#0d1426; --card:#17213d; }
@@ -20,10 +20,10 @@
   </style>
 </head>
 <body><main>
-  <header><div class="brand">ShowdUp</div><h1>Privacy Policy</h1><p>Effective 12 September 2026</p></header>
+  <header><div class="brand">ShowdUp</div><h1>Privacy Policy</h1><p>Effective 16 September 2026</p></header>
 
   <h2>Information stored on your device</h2>
-  <p>ShowdUp stores your timezone, commitments, weekly and per-day schedules, reminder activity, attempt history, subscription feature state and verification evidence in the app's private storage. Walk evidence can include active duration, distance, coordinates, accuracy and timestamps. Gym evidence can include the destination you chose, coordinates, accuracy, timestamps and dwell duration. Place-search text and the selected result are processed by Google Places when you open gym or destination search.</p>
+  <p>ShowdUp stores your timezone, commitments, weekly and per-day schedules, reminder activity, attempt history, subscription feature state and verification evidence in the app's private storage. Walk evidence can include active duration, distance, coordinates, accuracy and timestamps. Place evidence can include the destination you chose, coordinates, accuracy, timestamps and dwell duration. Focus evidence can include selected app package names and timer resets. Workout evidence can include exercise type, duration, recording method and source attribution. LeetCode evidence can include the public username, accepted count and problem slugs. Place-search text and the selected result are processed by Google Places when you open place search.</p>
   <p>ShowdUp does not upload commitment titles, step evidence, coordinates or location evidence for social features. If you use Battles, it uploads your chosen identity, mascot, battle membership and aggregated outcome, snooze, score and pet-state events to Firebase. Android backup is disabled. Terminal attempt history is retained locally for up to two years. You can delete local product data in ShowdUp Settings; Android also removes private app data when you clear storage or uninstall.</p>
   <p>If you choose “Share a buddy check-in” or “Share my day,” Android's share sheet sends the summary or image only to the destination you select. ShowdUp does not maintain or upload a buddy list.</p>
 
@@ -31,8 +31,8 @@
   <p>ShowdUp uses RevenueCat to present subscription plans, validate purchases and decide whether Pro features are active. The app creates a random, device-local RevenueCat app-user identifier. RevenueCat and Google Play can process that identifier, purchase tokens, product and entitlement status, store/device information and transaction events needed to operate subscriptions. Google Play processes payment; ShowdUp does not receive card or bank details.</p>
   <p>Deleting ShowdUp data or uninstalling does not cancel a Google Play subscription. Manage or cancel subscriptions through Google Play. See <a href="https://www.revenuecat.com/privacy/">RevenueCat's privacy information</a> and <a href="https://policies.google.com/privacy">Google's privacy policy</a>.</p>
 
-  <h2>Accessibility-based selected-app restrictions</h2>
-  <p>Pro users can optionally enable ShowdUp's Android Accessibility service. During an active restricted commitment, the service receives window-change events to identify the package name of the foreground app. It compares that package name with apps you selected and can show a ShowdUp blocking screen.</p>
+  <h2>Accessibility-based Focus and selected-app restrictions</h2>
+  <p>Focus users can optionally enable ShowdUp's Android Accessibility service. During an active Focus or restricted commitment, the service receives window-change events to identify only the package name of the foreground app. A selected app open for ten continuous seconds resets the local Focus timer. For Pro users, ShowdUp can instead show a blocking screen immediately.</p>
   <p>ShowdUp does not use this service to read screen contents, typed text, notifications, passwords or form fields; it does not inject gestures or key events; and it does not transmit Accessibility events or the selected-app list. You can decline this feature, disable the service in Android Accessibility settings, clear app data or uninstall ShowdUp. Core reminders and verification remain available without Accessibility access.</p>
 
   <h2>Android permissions</h2>
@@ -40,15 +40,19 @@
     <li>Physical activity is used for step-counter verification.</li>
     <li>Precise foreground location is used only after you start arrival-and-dwell verification. ShowdUp does not request background location.</li>
     <li>Notifications, alarms, foreground services and boot completion deliver agreed reminders and keep active verification running.</li>
-    <li>Installed launcher apps are listed locally only so you can select optional Pro distractions.</li>
+    <li>Installed launcher apps are listed locally only so you can select Focus proof or optional Pro restrictions.</li>
+    <li>Health Connect exercise-session and background-read access is optional and used only for Workout commitments. ShowdUp accepts actively or automatically recorded session time/type and source attribution; it rejects manual and unknown records and does not read routes, heart rate or unrelated health data.</li>
     <li>Display over other apps is optional and shows the ShowdUp pet, score and controls. It does not inspect content underneath the overlay, and a persistent notification identifies the running service.</li>
   </ul>
+
+  <h2>LeetCode public profiles</h2>
+  <p>If you create a LeetCode commitment, ShowdUp sends the username you enter to LeetCode and reads recent accepted submissions visible on that public profile. ShowdUp does not request or store your LeetCode password, session cookie or private account data. This integration depends on LeetCode's public profile service and can become temporarily unavailable.</p>
 
   <h2>Firebase and Battles</h2>
   <p>Firebase Authentication creates an anonymous account when configured; Google sign-in is optional for solo use and required to invite or join a Battle. Firestore and Cloud Functions store battle profiles, memberships, expiring invite codes and aggregated scoring events. They do not store commitment titles or raw verification evidence. ShowdUp has no scheduled database-wide Firebase job.</p>
 
   <h2>Sharing, security and limits</h2>
-  <p>ShowdUp has no advertising and does not sell personal data. Data is shared only with Google Play and RevenueCat as necessary to provide subscriptions, when you deliberately use Android's share sheet, or when required by law.</p>
+  <p>ShowdUp has no advertising and does not sell personal data. Data is processed by Google Play and RevenueCat for subscriptions, Firebase for optional Battles, Google Places when you deliberately search for a place, Health Connect when you enable Workout proof, and LeetCode when you configure public-profile proof. Android's share sheet sends content only to the destination you choose. Information can also be disclosed when required by law.</p>
   <p>On-device data is protected by Android's application sandbox. No software can guarantee absolute security, and root-level access may allow alteration. Location and step evidence are plausibility signals, not tamper-proof proof of a workout or productive activity.</p>
 
   <h2>Children</h2>

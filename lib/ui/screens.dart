@@ -41,7 +41,7 @@ class PageHeading extends StatelessWidget {
   final Widget? trailing;
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 26, top: 8),
+    padding: const EdgeInsets.only(bottom: 22, top: 6),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -54,9 +54,9 @@ class PageHeading extends StatelessWidget {
               Text(
                 title,
                 style: const TextStyle(
-                  fontSize: 32,
+                  fontSize: 30,
                   fontWeight: FontWeight.w800,
-                  letterSpacing: -1.2,
+                  letterSpacing: -1,
                 ),
               ),
             ],
@@ -93,15 +93,15 @@ class AlarmModePanel extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Eyebrow('Choose an alarm'),
+      const Eyebrow('Start here'),
       const SizedBox(height: 12),
       Row(
         children: [
           Expanded(
             child: _AlarmMode(
               icon: Icons.alarm,
-              title: 'Regular',
-              subtitle: 'Open your Clock app',
+              title: 'Regular alarm',
+              subtitle: 'Rings once in Clock',
               onTap: () => _regularAlarm(context),
             ),
           ),
@@ -109,8 +109,8 @@ class AlarmModePanel extends StatelessWidget {
           Expanded(
             child: _AlarmMode(
               icon: Icons.verified_outlined,
-              title: 'Commitment',
-              subtitle: 'Stops after proof',
+              title: 'ShowdUp alarm',
+              subtitle: 'Repeats until proof',
               highlighted: true,
               onTap: () => openWizard(context),
             ),
@@ -177,10 +177,43 @@ class _AlarmMode extends StatelessWidget {
 }
 
 class TodayScreen extends ConsumerWidget {
-  const TodayScreen({super.key});
+  const TodayScreen({
+    super.key,
+    this.alarmTutorialKey,
+    this.proTutorialKey,
+    this.progressTutorialKey,
+  });
+  final GlobalKey? alarmTutorialKey;
+  final GlobalKey? proTutorialKey;
+  final GlobalKey? progressTutorialKey;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final app = ref.watch(appProvider), now = DateTime.now();
+    final pet = app.petSnapshot;
+    final weekStart = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(Duration(days: now.weekday - 1));
+    final weeklyAttempts = app.attempts
+        .where((attempt) => !attempt.windowEndAt.isBefore(weekStart))
+        .toList();
+    final weeklySnoozes = weeklyAttempts.fold<int>(
+      0,
+      (sum, attempt) => sum + attempt.snoozes,
+    );
+    final weeklyResets = weeklyAttempts.fold<int>(
+      0,
+      (sum, attempt) =>
+          sum + ((attempt.evidence?['resetCount'] as num?)?.toInt() ?? 0),
+    );
+    final weeklyMisses = weeklyAttempts
+        .where(
+          (attempt) =>
+              attempt.state == AttemptState.expired ||
+              attempt.state == AttemptState.abandoned,
+        )
+        .length;
     final today =
         app.attempts
             .where(
@@ -208,6 +241,9 @@ class TodayScreen extends ConsumerWidget {
     final active = app.commitments
         .where((c) => c.status == CommitmentStatus.active)
         .toList();
+    final drafts = app.commitments
+        .where((c) => c.status == CommitmentStatus.draft)
+        .toList();
     final a = today.isEmpty ? null : today.first;
     final c = a == null ? null : app.commitment(a.commitmentId);
     return RefreshIndicator(
@@ -216,21 +252,19 @@ class TodayScreen extends ConsumerWidget {
         padding: const EdgeInsets.all(24),
         children: [
           PageHeading(
-            'Wake up with a reason.',
+            'Today',
             DateFormat('EEEE, MMMM d').format(now),
-            trailing: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: T.surface,
-              ),
-              child: const Icon(Icons.wb_sunny_outlined, color: T.accent),
+            trailing: PetScoreChip(
+              glyph: pet.mascot.fallbackGlyph,
+              score: pet.weeklyScore,
+              mood: pet.mood.wire,
             ),
           ),
-          const AlarmModePanel(),
+          KeyedSubtree(key: alarmTutorialKey, child: const AlarmModePanel()),
           const SizedBox(height: 14),
           if (app.user?.isPro != true) ...[
             InkWell(
+              key: proTutorialKey,
               borderRadius: BorderRadius.circular(T.radius),
               onTap: () => Navigator.push(
                 context,
@@ -247,12 +281,12 @@ class TodayScreen extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'ShowdUp Pro',
+                            'Make it harder to escape',
                             style: TextStyle(fontWeight: FontWeight.w800),
                           ),
                           SizedBox(height: 3),
                           Text(
-                            'Block distractions and run more commitments',
+                            'Pro blocks selected apps during your promise',
                             style: TextStyle(color: T.muted, fontSize: 11),
                           ),
                         ],
@@ -270,6 +304,7 @@ class TodayScreen extends ConsumerWidget {
             const Center(child: CircularProgressIndicator())
           else if (a != null && c != null) ...[
             Panel(
+              key: progressTutorialKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -307,8 +342,14 @@ class TodayScreen extends ConsumerWidget {
                           : null,
                       label: switch (c.verifierType) {
                         VerifierType.steps => 'STEPS RECORDED',
-                        VerifierType.location => 'GYM ARRIVAL',
+                        VerifierType.location =>
+                          c.kind == CommitmentKind.gym
+                              ? 'GYM ARRIVAL'
+                              : 'PLACE ARRIVAL',
                         VerifierType.walk => 'WALK PROGRESS',
+                        VerifierType.focus => 'FOCUS PROGRESS',
+                        VerifierType.healthWorkout => 'WORKOUT PROGRESS',
+                        VerifierType.leetcode => 'LEETCODE PROGRESS',
                       },
                       color: a.state == AttemptState.completed
                           ? T.ok
@@ -363,12 +404,15 @@ class TodayScreen extends ConsumerWidget {
             const SizedBox(height: 20),
           ] else ...[
             Panel(
+              key: progressTutorialKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
                     active.isEmpty
-                        ? Icons.flag_outlined
+                        ? drafts.isNotEmpty
+                              ? Icons.warning_amber_rounded
+                              : Icons.flag_outlined
                         : Icons.nights_stay_outlined,
                     color: T.accent,
                     size: 40,
@@ -376,7 +420,9 @@ class TodayScreen extends ConsumerWidget {
                   const SizedBox(height: 24),
                   Text(
                     active.isEmpty
-                        ? 'One promise.\nA place to start.'
+                        ? drafts.isNotEmpty
+                              ? 'Your draft needs\none more step.'
+                              : 'One promise.\nA place to start.'
                         : 'You have a plan.',
                     style: const TextStyle(
                       fontSize: 28,
@@ -386,18 +432,24 @@ class TodayScreen extends ConsumerWidget {
                   const SizedBox(height: 12),
                   Text(
                     active.isEmpty
-                        ? 'A morning walk. Arriving at the gym. Pick something small enough to repeat.'
+                        ? drafts.isNotEmpty
+                              ? 'Enable the required Android access to activate ${drafts.first.title}. Nothing is scheduled while it remains a draft.'
+                              : 'A walk, Focus session, workout, place arrival or accepted problem. Pick something small enough to repeat.'
                         : 'Your next window opens ${DateFormat('EEE, MMM d · HH:mm').format(nextWindow(active.first.schedule, now).toLocal())}. Reminders follow your chosen schedule.',
                     style: const TextStyle(color: T.muted, height: 1.6),
                   ),
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: () => active.isEmpty
-                        ? openWizard(context)
+                        ? drafts.isNotEmpty
+                              ? openWizard(context, commitment: drafts.first)
+                              : openWizard(context)
                         : openWizard(context, commitment: active.first),
                     child: Text(
                       active.isEmpty
-                          ? 'Create a commitment  +'
+                          ? drafts.isNotEmpty
+                                ? 'Finish setup  →'
+                                : 'Create a commitment  +'
                           : 'View commitment',
                     ),
                   ),
@@ -426,37 +478,14 @@ class TodayScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 24),
-          const Panel(
-            padding: 20,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.auto_awesome_outlined, color: T.accent, size: 20),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Consistency is a quiet kind of progress.',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          height: 1.5,
-                        ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'You don’t need a perfect day. Just a next step.',
-                        style: TextStyle(
-                          color: T.muted,
-                          fontSize: 12,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+          _FrictionCard(
+            snoozes: weeklySnoozes,
+            focusResets: weeklyResets,
+            misses: weeklyMisses,
+            isPro: app.user?.isPro == true,
+            onOpenPro: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const ProScreen()),
             ),
           ),
           const SizedBox(height: 20),
@@ -496,6 +525,82 @@ class _Stat extends StatelessWidget {
   );
 }
 
+class _FrictionCard extends StatelessWidget {
+  const _FrictionCard({
+    required this.snoozes,
+    required this.focusResets,
+    required this.misses,
+    required this.isPro,
+    required this.onOpenPro,
+  });
+
+  final int snoozes;
+  final int focusResets;
+  final int misses;
+  final bool isPro;
+  final VoidCallback onOpenPro;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = snoozes + focusResets + misses;
+    return Panel(
+      color: T.surfaceRaised,
+      padding: 20,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.bolt_rounded, color: T.accent, size: 20),
+              SizedBox(width: 10),
+              Eyebrow('Friction map · this week', color: T.accent),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            total == 0
+                ? 'Nothing is fighting the plan yet.'
+                : '$total moments tried to break the plan.',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -.3,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _frictionPill('$snoozes snoozes'),
+              _frictionPill('$focusResets distractions'),
+              _frictionPill('$misses misses'),
+            ],
+          ),
+          if (!isPro && total > 0) ...[
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: onOpenPro,
+              icon: const Icon(Icons.lock_outline_rounded, size: 17),
+              label: const Text('Turn friction into guardrails'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _frictionPill(String label) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+    decoration: BoxDecoration(
+      color: T.bg.withValues(alpha: .55),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: T.outline),
+    ),
+    child: Text(label, style: const TextStyle(color: T.muted, fontSize: 11)),
+  );
+}
+
 String goalDescription(Commitment c) {
   final cfg = c.verifierConfig;
   return cfg is StepsConfig
@@ -511,8 +616,29 @@ String goalDescription(Commitment c) {
         }
       : cfg is LocationConfig
       ? 'Stay near ${cfg.label?.isNotEmpty == true ? cfg.label : 'your destination'} for ${cfg.dwellMs ~/ 60000} minutes'
+      : cfg is FocusConfig
+      ? '${cfg.targetDurationMs ~/ 60000} uninterrupted minutes away from ${cfg.packages.length} selected apps'
+      : cfg is HealthWorkoutConfig
+      ? '${cfg.targetDurationMs ~/ 60000} sensor-recorded Health Connect minutes · ${cfg.activityType}'
+      : cfg is LeetCodeConfig
+      ? '${cfg.targetAccepted} accepted problem${cfg.targetAccepted == 1 ? '' : 's'} on @${cfg.username}'
       : '';
 }
+
+String proofDescription(Commitment c) => switch (c.verifierConfig) {
+  WalkConfig() =>
+    'Foreground GPS counts plausible movement with fresh, precise, non-mock fixes. Tracking starts here or from the first reminder.',
+  LocationConfig(:final dwellMs) =>
+    'Foreground GPS proves a continuous ${dwellMs ~/ 60000}-minute stay inside the fixed 150 m place boundary.',
+  FocusConfig() =>
+    'Android reports only foreground app package changes. Ten continuous seconds in a selected app resets the uninterrupted timer.',
+  HealthWorkoutConfig() =>
+    'One sensor-recorded Health Connect exercise session must meet the duration. Manual and unknown records never count.',
+  LeetCodeConfig() =>
+    'Unique accepted submissions on the chosen public LeetCode profile must appear inside this commitment window.',
+  StepsConfig() =>
+    'Android’s step counter must record plausible new movement during this window.',
+};
 
 class CommitmentsScreen extends ConsumerWidget {
   const CommitmentsScreen({super.key});
@@ -545,12 +671,15 @@ class CommitmentsScreen extends ConsumerWidget {
                         color: T.accent.withValues(alpha: .12),
                         borderRadius: BorderRadius.circular(14),
                       ),
-                      child: Icon(
-                        c.kind == CommitmentKind.walk
-                            ? Icons.directions_walk
-                            : Icons.place_outlined,
-                        color: T.accent,
-                      ),
+                      child: Icon(switch (c.kind) {
+                        CommitmentKind.walk => Icons.directions_run,
+                        CommitmentKind.gym => Icons.fitness_center,
+                        CommitmentKind.arrive => Icons.place_outlined,
+                        CommitmentKind.focus => Icons.center_focus_strong,
+                        CommitmentKind.workout =>
+                          Icons.health_and_safety_outlined,
+                        CommitmentKind.leetcode => Icons.code_rounded,
+                      }, color: T.accent),
                     ),
                     const Spacer(),
                     Eyebrow(
@@ -596,21 +725,25 @@ class CommitmentsScreen extends ConsumerWidget {
                     ),
                     const Spacer(),
                     TextButton(
-                      onPressed: () async {
-                        try {
-                          await app.repository.update(c.id, {
-                            'status': c.status == CommitmentStatus.active
-                                ? 'paused'
-                                : 'active',
-                          });
-                        } catch (e) {
-                          if (context.mounted) {
-                            showMessage(context, friendlyError(e));
-                          }
-                        }
-                      },
+                      onPressed: c.status == CommitmentStatus.draft
+                          ? () => openWizard(context, commitment: c)
+                          : () async {
+                              try {
+                                await app.repository.update(c.id, {
+                                  'status': c.status == CommitmentStatus.active
+                                      ? 'paused'
+                                      : 'active',
+                                });
+                              } catch (e) {
+                                if (context.mounted) {
+                                  showMessage(context, friendlyError(e));
+                                }
+                              }
+                            },
                       child: Text(
-                        c.status == CommitmentStatus.active
+                        c.status == CommitmentStatus.draft
+                            ? 'Finish setup'
+                            : c.status == CommitmentStatus.active
                             ? 'Pause'
                             : 'Resume',
                       ),
@@ -1068,9 +1201,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                     const Eyebrow('What counts as done'),
                     const SizedBox(height: 12),
                     Text(
-                      c.kind == CommitmentKind.walk
-                          ? 'Foreground GPS counts plausible movement with a precise, non-mock fix. Keep your phone with you and open this screen to start verification.'
-                          : 'Location proves presence near your gym, not a workout. Open this screen and start verification. If you never open the app or tap a reminder, nothing verifies.',
+                      proofDescription(c),
                       style: const TextStyle(
                         color: T.muted,
                         fontSize: 13,
@@ -1078,6 +1209,14 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    if (a.state == AttemptState.completed &&
+                        a.evidence?['source'] != null) ...[
+                      Text(
+                        'Verified by ${a.evidence?['sourceLabel'] ?? a.evidence?['source']}',
+                        style: const TextStyle(color: T.ok, fontSize: 12),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Text(
                       '${c.schedule.windowStartLocal} – ${c.schedule.windowEndLocal} · ${c.schedule.timezone}',
                       style: const TextStyle(fontSize: 12),
@@ -1497,8 +1636,13 @@ class _ProScreenState extends ConsumerState<ProScreen> {
 }
 
 class SettingsScreen extends ConsumerWidget {
-  const SettingsScreen({super.key, required this.onLogout});
+  const SettingsScreen({
+    super.key,
+    required this.onLogout,
+    required this.onReplayTutorial,
+  });
   final Future<void> Function() onLogout;
+  final VoidCallback onReplayTutorial;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final app = ref.watch(appProvider);
@@ -1544,6 +1688,13 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 24),
+        _tile(
+          context,
+          Icons.help_outline_rounded,
+          'Replay tutorial',
+          'Show the alarm and verification walkthrough again',
+          onReplayTutorial,
+        ),
         _tile(
           context,
           Icons.notifications_active_outlined,
@@ -1714,7 +1865,7 @@ class PrivacyScreen extends StatelessWidget {
           ),
           (
             'Walks',
-            'Walk verification starts when you open the app. Foreground GPS measures plausible movement for active time, distance or destination arrival. ShowdUp rejects mock, stale and low-accuracy fixes, but this still proves phone movement rather than exercise intensity.',
+            'Walk verification starts when you open the commitment or its first reminder fires. Foreground GPS measures plausible movement for active time or distance. ShowdUp rejects mock, stale and low-accuracy fixes, but this still proves phone movement rather than exercise intensity.',
           ),
           (
             'Location',
@@ -1722,7 +1873,15 @@ class PrivacyScreen extends StatelessWidget {
           ),
           (
             'Selected-app restrictions',
-            'Pro users can optionally enable Android Accessibility access to detect when a selected app opens during an active commitment. ShowdUp uses window-change events only to identify the foreground app and show a blocking screen. It does not read screen content, typed text, notifications or passwords. ShowdUp, Android Settings, permission controls, the default dialer and recognized emergency packages are excluded; device makers may provide other safety apps, so review your selected-app list carefully. You can disable the service at any time in Android Accessibility settings.',
+            'Focus users can optionally enable Android Accessibility access to identify only which selected foreground app opens and reset a local timer after ten seconds. Pro can additionally show a blocking screen. ShowdUp does not read screen content, typed text, notifications or passwords. ShowdUp, Android Settings, permission controls, the default dialer and recognized emergency packages are excluded. You can disable the service at any time in Android Accessibility settings.',
+          ),
+          (
+            'Health Connect workouts',
+            'Workout verification reads only exercise-session time, type, recording method, source app and device attribution. Manual and unknown records, routes, heart rate and other health data are not read. The evidence remains on this device.',
+          ),
+          (
+            'LeetCode',
+            'ShowdUp sends the username you enter to LeetCode and reads recent accepted submissions visible on that public profile. It never asks for or stores a LeetCode password or session cookie. If the public service is unavailable, the attempt is unable to verify rather than missed.',
           ),
           (
             'Pet overlay',

@@ -70,12 +70,22 @@ class StepsVerifier implements Verifier {
                 !_satisfied) {
               _satisfied = true;
               _events.add(
-                VerificationSignal.satisfied({
-                  'stepsSinceBaseline': e.stepsSinceBaseline,
-                  'elapsedMs': e.elapsedMs,
-                  'baselineCapturedAt':
-                      DateTime.now().millisecondsSinceEpoch - e.elapsedMs,
-                }),
+                VerificationSignal.satisfied(
+                  evidenceEnvelope(
+                    verifier: type,
+                    source: 'android_step_counter',
+                    integrityFlags: const [
+                      'monotonic_sensor',
+                      'plausible_cadence',
+                    ],
+                    details: {
+                      'stepsSinceBaseline': e.stepsSinceBaseline,
+                      'elapsedMs': e.elapsedMs,
+                      'baselineCapturedAt':
+                          DateTime.now().millisecondsSinceEpoch - e.elapsedMs,
+                    },
+                  ),
+                ),
               );
             } else if (!_satisfied) {
               _events.add(VerificationSignal.progressAt(p));

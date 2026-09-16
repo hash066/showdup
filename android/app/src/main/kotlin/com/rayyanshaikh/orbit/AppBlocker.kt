@@ -7,8 +7,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * A deliberately small accessibility service used only to return from apps the
@@ -16,6 +19,14 @@ import org.json.JSONArray
  * contents, record input, inject gestures, or request key-event filtering.
  */
 class AppBlockerService : AccessibilityService() {
+    private val handler = Handler(Looper.getMainLooper())
+    private val focusTicker = object : Runnable {
+        override fun run() {
+            FocusTracker.tick(this@AppBlockerService)
+            handler.postDelayed(this, 1_000)
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         serviceInfo = serviceInfo.apply {
@@ -24,10 +35,14 @@ class AppBlockerService : AccessibilityService() {
             notificationTimeout = 150
             flags = 0
         }
+        instance = this
+        handler.removeCallbacks(focusTicker)
+        handler.post(focusTicker)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString() ?: return
+        FocusTracker.onPackageChanged(this, packageName)
         if (!AppBlocker.isBlocked(this, packageName)) return
 
         startActivity(Intent(this, BlockerActivity::class.java).apply {
@@ -37,6 +52,16 @@ class AppBlockerService : AccessibilityService() {
     }
 
     override fun onInterrupt() = Unit
+
+    override fun onDestroy() {
+        handler.removeCallbacks(focusTicker)
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
+
+    companion object {
+        var instance: AppBlockerService? = null
+    }
 }
 
 object AppBlocker {
@@ -94,7 +119,7 @@ object AppBlocker {
     }
 
     fun stop(context: Context, attemptId: String? = null) {
-        if (attemptId == null) { prefs(context).edit().clear().apply(); return }
+        if (attemptId == null) { prefs(context).edit().remove(KEY_SESSIONS).apply(); return }
         val kept = sessions(context).filter { it.optString("attemptId") != attemptId }
         prefs(context).edit().putString(KEY_SESSIONS, JSONArray(kept).toString()).apply()
     }
@@ -156,5 +181,146 @@ object AppBlocker {
         val dialer = try { context.packageManager.resolveActivity(Intent(Intent.ACTION_DIAL), PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName } catch (_: Exception) { null }
         if (packageName == dialer) return true
         return packageName.contains("emergency", ignoreCase = true)
+    }
+}
+
+/**
+ * Local-only Focus evidence. It stores package names and timing, never window
+ * content. A selected app must stay foreground for ten seconds before the
+ * uninterrupted clean timer is reset.
+ */
+object FocusTracker {
+    private const val PREFS = "showdup_focus"
+    private const val KEY_SESSIONS = "sessions"
+    private var foregroundPackage: String? = null
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun sessions(context: Context): MutableList<JSONObject> = try {
+        val values = JSONArray(prefs(context).getString(KEY_SESSIONS, "[]"))
+        (0 until values.length()).map { values.getJSONObject(it) }.toMutableList()
+    } catch (_: Exception) { mutableListOf() }
+
+    private fun save(context: Context, sessions: List<JSONObject>) {
+        prefs(context).edit().putString(KEY_SESSIONS, JSONArray(sessions).toString()).apply()
+    }
+
+    fun start(context: Context, args: Map<*, *>): Boolean {
+        if (AppBlocker.status(context)["accessibilityEnabled"] != true) return false
+        val id = args["attemptId"]?.toString()?.trim().orEmpty()
+        val packages = (args["packages"] as? List<*>)?.mapNotNull { it?.toString() }
+            ?.filter { it.isNotBlank() && !AppBlocker.isSafetyExempt(context, it) }
+            ?.distinct().orEmpty()
+        val start = (args["startEpochMs"] as? Number)?.toLong() ?: return false
+        val end = (args["endEpochMs"] as? Number)?.toLong() ?: return false
+        val target = (args["targetDurationMs"] as? Number)?.toLong() ?: return false
+        val grace = ((args["graceSeconds"] as? Number)?.toLong() ?: 10L) * 1_000
+        if (id.isEmpty() || packages.isEmpty() || end <= start || target < 300_000 || grace != 10_000L) return false
+        val stored = sessions(context)
+        if (stored.any { it.optString("attemptId") == id }) { tick(context); return true }
+        val current = stored.toMutableList()
+        val now = System.currentTimeMillis()
+        prefs(context).edit().remove("result:$id").apply()
+        current += JSONObject()
+            .put("attemptId", id)
+            .put("packages", JSONArray(packages))
+            .put("start", start)
+            .put("end", end)
+            .put("target", target)
+            .put("grace", grace)
+            .put("cleanSince", maxOf(start, now))
+            .put("resetCount", 0)
+        save(context, current)
+        onPackageChanged(context, foregroundPackage)
+        tick(context)
+        return true
+    }
+
+    fun stop(context: Context, attemptId: String, clearResult: Boolean = true) {
+        save(context, sessions(context).filter { it.optString("attemptId") != attemptId })
+        if (clearResult) prefs(context).edit().remove("result:$attemptId").apply()
+    }
+
+    fun onPackageChanged(context: Context, packageName: String?) {
+        val previous = foregroundPackage
+        foregroundPackage = packageName
+        if (previous == packageName) return
+        val now = System.currentTimeMillis()
+        val values = sessions(context)
+        values.forEach { session ->
+            val packages = session.optJSONArray("packages") ?: JSONArray()
+            val selected = packageName != null &&
+                (0 until packages.length()).any { packages.getString(it) == packageName }
+            if (selected) {
+                session.put("distractingSince", now).put("resetApplied", false)
+            } else if (session.has("distractingSince")) {
+                if (session.optBoolean("resetApplied", false)) session.put("cleanSince", now)
+                session.remove("distractingSince")
+                session.remove("resetApplied")
+            }
+        }
+        save(context, values)
+    }
+
+    fun tick(context: Context) {
+        val now = System.currentTimeMillis()
+        val values = sessions(context)
+        val kept = mutableListOf<JSONObject>()
+        values.forEach { session ->
+            val id = session.optString("attemptId")
+            if (now >= session.optLong("end")) return@forEach
+            if (now < session.optLong("start")) { kept += session; return@forEach }
+            val distractingSince = session.optLong("distractingSince", 0L)
+            if (FocusPolicy.shouldReset(
+                    distractingSince,
+                    now,
+                    session.optBoolean("resetApplied", false),
+                    session.optLong("grace", FocusPolicy.GRACE_MS),
+                )) {
+                session.put("resetApplied", true)
+                    .put("cleanSince", now)
+                    .put("resetCount", session.optInt("resetCount", 0) + 1)
+            }
+            val distracted = session.optBoolean("resetApplied", false)
+            val elapsed = if (distracted) 0L else (now - session.optLong("cleanSince", now)).coerceAtLeast(0L)
+            if (elapsed >= session.optLong("target")) {
+                val payload = JSONObject()
+                    .put("schemaVersion", 1)
+                    .put("verifier", "focus")
+                    .put("source", "android_accessibility_window_events")
+                    .put("targetDurationMs", session.optLong("target"))
+                    .put("resetCount", session.optInt("resetCount", 0))
+                AlarmEngine.prefs(context).edit().putString(
+                    "completion:$id",
+                    JSONObject().put("type", "focus").put("payload", payload)
+                        .put("completedAt", now).toString(),
+                ).apply()
+                prefs(context).edit().putString(
+                    "result:$id",
+                    JSONObject().put("completed", true).put("resetCount", session.optInt("resetCount", 0)).toString(),
+                ).apply()
+                AlarmEngine.cancel(context, id)
+            } else kept += session
+        }
+        save(context, kept)
+    }
+
+    fun status(context: Context, attemptId: String): Map<String, Any> {
+        tick(context)
+        val result = prefs(context).getString("result:$attemptId", null)
+        if (result != null) {
+            val value = JSONObject(result)
+            return mapOf("completed" to value.optBoolean("completed"), "progress" to 1.0, "resetCount" to value.optInt("resetCount"))
+        }
+        val session = sessions(context).firstOrNull { it.optString("attemptId") == attemptId }
+            ?: return mapOf("completed" to false, "progress" to 0.0, "failed" to (AppBlocker.status(context)["accessibilityEnabled"] != true))
+        val now = System.currentTimeMillis()
+        return mapOf(
+            "completed" to false,
+            "progress" to FocusPolicy.progress(session.optLong("cleanSince", now), now, session.optLong("target"), session.optBoolean("resetApplied", false)),
+            "resetCount" to session.optInt("resetCount", 0),
+            "failed" to (AppBlocker.status(context)["accessibilityEnabled"] != true),
+        )
     }
 }

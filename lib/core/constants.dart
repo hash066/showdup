@@ -25,6 +25,8 @@ class K {
   static const locationChannel = 'app.showdup/location';
   static const locationEvents = 'app.showdup/location_events';
   static const blockerChannel = 'app.showdup/blocker';
+  static const focusChannel = 'app.showdup/focus';
+  static const healthChannel = 'app.showdup/health';
 
   // Callable function names
   static const fnCreateCommitment = 'createCommitment';

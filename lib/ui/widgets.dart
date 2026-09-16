@@ -14,7 +14,11 @@ class Brand extends StatelessWidget {
         width: size + 10,
         height: size + 10,
         decoration: BoxDecoration(
-          color: T.accent,
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [T.accentSoft, T.accent],
+          ),
           borderRadius: BorderRadius.circular(11),
         ),
         child: Icon(Icons.check_rounded, color: T.bg, size: size),
@@ -64,10 +68,51 @@ class Panel extends StatelessWidget {
     padding: EdgeInsets.all(padding),
     decoration: BoxDecoration(
       color: color,
-      borderRadius: BorderRadius.circular(24),
-      border: Border.all(color: Colors.white.withValues(alpha: .055)),
+      borderRadius: BorderRadius.circular(T.radius),
+      border: Border.all(color: T.outline),
     ),
     child: child,
+  );
+}
+
+class PetScoreChip extends StatelessWidget {
+  const PetScoreChip({
+    super.key,
+    required this.glyph,
+    required this.score,
+    required this.mood,
+  });
+
+  final String glyph;
+  final int score;
+  final String mood;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: '$mood pet, weekly score $score',
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(10, 7, 13, 7),
+      decoration: BoxDecoration(
+        color: T.surfaceRaised,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: T.outline),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(glyph, style: const TextStyle(fontSize: 20)),
+          const SizedBox(width: 8),
+          Text(
+            '$score',
+            style: const TextStyle(
+              color: T.accentSoft,
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
+            ),
+          ),
+        ],
+      ),
+    ),
   );
 }
 

@@ -53,7 +53,7 @@ object AlarmEngine {
  }
  fun cancel(c: Context, id: String) {
   prefs(c).getString("alarm:$id", null)?.let { val j = JSONObject(it); for (i in 0 until min(6, j.optInt("maxReminders", 6))) c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c, id, i)) }
-  prefs(c).edit().remove("alarm:$id").putBoolean("ended:$id", true).apply(); AppBlocker.stop(c, id); silence(c, id, false, "cancelled")
+  prefs(c).edit().remove("alarm:$id").remove("verifier_error:$id").putBoolean("ended:$id", true).apply(); AppBlocker.stop(c, id); FocusTracker.stop(c,id,false); silence(c, id, false, "cancelled")
  }
  fun silence(c: Context, id: String, snooze: Boolean, source: String = "manual") {
   if (ringingId == id) { ringtone?.stop(); ringtone = null; ringingId = null; originalVolume?.let { c.getSystemService(AudioManager::class.java).setStreamVolume(AudioManager.STREAM_ALARM, it, 0) }; originalVolume = null }
@@ -76,12 +76,19 @@ object AlarmEngine {
   val raw = prefs(c).getString("alarm:$id", null) ?: return; val j = JSONObject(raw); val now = System.currentTimeMillis()
   if (now >= j.getLong("endEpochMs") || prefs(c).getBoolean("ended:$id", false)) { expire(c, id, "window_ended"); return }
   channels(c); configureBlocker(c, j); if (j.optLong("firstFiredAt", 0L) == 0L) j.put("firstFiredAt", now); j.put("currentIndex", index).put("nextIndex", index).put("nextAlarmAt", 0L); prefs(c).edit().putString("alarm:$id", j.toString()).apply()
+  if (j.optString("verifierType") == "focus") {
+   val cfg = j.getJSONObject("verifierConfig")
+   val focusStarted=FocusTracker.start(c, mapOf("attemptId" to id,"packages" to (0 until cfg.getJSONArray("packages").length()).map { cfg.getJSONArray("packages").getString(it) },"startEpochMs" to j.getLong("startEpochMs"),"endEpochMs" to j.getLong("endEpochMs"),"targetDurationMs" to cfg.getLong("targetDurationMs"),"graceSeconds" to cfg.optInt("graceSeconds",10)))
+   if(!focusStarted){prefs(c).edit().putString("failure:$id",JSONObject().put("type","focus").put("reason","accessibility_revoked").put("failedAt",now).toString()).apply();cancel(c,id);return}
+   if (FocusTracker.status(c,id)["completed"] == true) return
+  }
   val snooze = PendingIntent.getBroadcast(c, ("snooze:$id:$index").hashCode(), Intent(c, AlarmReceiver::class.java).setAction("showdup.snooze").putExtra("attemptId", id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   val n = NotificationCompat.Builder(c, "reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(j.optString("title", "Time to show up")).setContentText("Pulse ${index + 1} of ${min(6, j.optInt("maxReminders", 6))}. Snoozing lowers today’s score.").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM).setContentIntent(launch(c, id)).setFullScreenIntent(launch(c, id), true).setAutoCancel(true).addAction(0, "Snooze", snooze).build()
   c.getSystemService(NotificationManager::class.java).notify(id.hashCode(), n); ringingId?.let { silence(c, it, false, "replaced") }; ringingId = id
   if (j.optString("volumeMode") == "loud") { val audio = c.getSystemService(AudioManager::class.java); originalVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM); audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0) }
   ringtone = RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)); ringtone?.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(); ringtone?.play(); handler.postDelayed({ if (ringingId == id) silence(c, id, true, "automatic") }, 30_000); event(c, id, "fired", index.toString())
   if (j.optString("verifierType") == "steps") try { val cfg = j.getJSONObject("verifierConfig"); if (!TrackingService.start(c, "steps", JSONObject().put("attemptId", id).put("targetSteps", cfg.getInt("targetSteps")).put("minDurationMs", cfg.getLong("minDurationMs")).put("untilEpochMs", j.getLong("endEpochMs")))) diagnostic(c, "tracking_start", "Android denied starting step verification from this reminder.") } catch (e: Exception) { diagnostic(c, "tracking_start", e.message ?: "Unable to start step verification.") }
+  if (j.optString("verifierType") in setOf("location","walk")) try { val cfg=j.getJSONObject("verifierConfig");val data=JSONObject(cfg.toString()).put("attemptId",id).put("untilEpochMs",j.getLong("endEpochMs"));if(!TrackingService.start(c,j.getString("verifierType"),data))diagnostic(c,"tracking_start","Android denied starting location verification from this reminder.") } catch(e:Exception){diagnostic(c,"tracking_start",e.message?:"Unable to start location verification.")}
  }
  private fun expire(c: Context, id: String, reason: String) {
   if (prefs(c).getBoolean("ended:$id", false)) return; val raw = prefs(c).getString("alarm:$id", null); val j = raw?.let { JSONObject(it) }

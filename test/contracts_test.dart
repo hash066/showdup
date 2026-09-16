@@ -140,6 +140,52 @@ void main() {
     );
   });
   test(
+    'new verified preset contracts round-trip without changing old wires',
+    () {
+      const focus = FocusConfig(
+        packages: ['com.example.distraction'],
+        targetDurationMs: 25 * 60000,
+      );
+      const workout = HealthWorkoutConfig(
+        activityType: 'running',
+        targetDurationMs: 30 * 60000,
+      );
+      const leetcode = LeetCodeConfig(username: 'hash_066', targetAccepted: 2);
+      expect(
+        VerifierConfig.fromJson(VerifierType.focus.wire, focus.toJson()),
+        isA<FocusConfig>(),
+      );
+      expect(
+        VerifierConfig.fromJson(
+          VerifierType.healthWorkout.wire,
+          workout.toJson(),
+        ),
+        isA<HealthWorkoutConfig>(),
+      );
+      expect(
+        (VerifierConfig.fromJson(VerifierType.leetcode.wire, leetcode.toJson())
+                as LeetCodeConfig)
+            .targetAccepted,
+        2,
+      );
+      expect(CommitmentStatus.from('draft'), CommitmentStatus.draft);
+      expect(
+        const FocusConfig(packages: []).validate(),
+        'Choose at least one distracting app.',
+      );
+      expect(
+        const HealthWorkoutConfig(activityType: 'manual').validate(),
+        isNotNull,
+      );
+      expect(
+        const LeetCodeConfig(username: 'bad username').validate(),
+        isNotNull,
+      );
+      expect(VerifierType.walk.wire, 'walk');
+      expect(CommitmentKind.gym.wire, 'gym');
+    },
+  );
+  test(
     'verifier registry accepts independent implementation unchanged',
     () async {
       final v = VerifierRegistry(

@@ -455,8 +455,12 @@ class LocalRepository implements Repository {
   @override
   Future<void> create(Map<String, dynamic> data) => _exclusive(() async {
     _rollover();
-    if (_commitments.where((c) => c.status == CommitmentStatus.active).length >=
-        _profile.maxActiveCommitments) {
+    final requestedStatus = CommitmentStatus.from(
+      data['status'] as String? ?? CommitmentStatus.active.wire,
+    );
+    if (requestedStatus == CommitmentStatus.active &&
+        _commitments.where((c) => c.status == CommitmentStatus.active).length >=
+            _profile.maxActiveCommitments) {
       throw StateError(
         'Free includes one active commitment. Upgrade to Pro for more.',
       );
@@ -465,7 +469,7 @@ class LocalRepository implements Repository {
     final commitment = Commitment.fromJson(id, {
       ...data,
       'ownerUid': _uid,
-      'status': CommitmentStatus.active.wire,
+      'status': requestedStatus.wire,
     });
     final validation = commitment.validate();
     if (validation != null) throw StateError(validation);
@@ -473,8 +477,10 @@ class LocalRepository implements Repository {
       throw StateError('Different times by day require ShowdUp Pro.');
     }
     _commitments = [..._commitments, commitment];
-    _effectiveFromMs[id] = _clock().millisecondsSinceEpoch;
-    _rollover();
+    if (requestedStatus == CommitmentStatus.active) {
+      _effectiveFromMs[id] = _clock().millisecondsSinceEpoch;
+      _rollover();
+    }
     await _save();
   });
 
@@ -722,6 +728,16 @@ class LocalRepository implements Repository {
         updated.schedule.hasCustomWindows &&
         advancedScheduleChanged) {
       throw StateError('Different times by day require ShowdUp Pro.');
+    }
+    if (old.status != CommitmentStatus.active &&
+        updated.status == CommitmentStatus.active &&
+        _commitments
+                .where((item) => item.status == CommitmentStatus.active)
+                .length >=
+            _profile.maxActiveCommitments) {
+      throw StateError(
+        'Free includes one active commitment. Upgrade to Pro for more.',
+      );
     }
     _commitments = _commitments.map((c) => c.id == id ? updated : c).toList();
     if (updated.status != CommitmentStatus.active) {

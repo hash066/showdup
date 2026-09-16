@@ -1,5 +1,8 @@
 import '../models/enums.dart';
 import 'location_verifier.dart';
+import 'focus_verifier.dart';
+import 'health_workout_verifier.dart';
+import 'leetcode_verifier.dart';
 import 'steps_verifier.dart';
 import 'walk_verifier.dart';
 import 'verifier.dart';
@@ -14,6 +17,9 @@ class VerifierRegistry {
             VerifierType.steps: StepsVerifier.new,
             VerifierType.location: LocationVerifier.new,
             VerifierType.walk: WalkVerifier.new,
+            VerifierType.focus: FocusVerifier.new,
+            VerifierType.healthWorkout: HealthWorkoutVerifier.new,
+            VerifierType.leetcode: LeetCodeVerifier.new,
           };
 
   final Map<VerifierType, Verifier Function()> _factories;

@@ -87,4 +87,33 @@ class BlockerChannel {
   });
 
   static Future<void> stop() => _channel.invokeMethod<void>('stop');
+
+  static Future<bool> startFocus({
+    required String attemptId,
+    required List<String> packages,
+    required int startEpochMs,
+    required int endEpochMs,
+    required int targetDurationMs,
+    int graceSeconds = 10,
+  }) async =>
+      await _channel.invokeMethod<bool>('startFocus', {
+        'attemptId': attemptId,
+        'packages': packages,
+        'startEpochMs': startEpochMs,
+        'endEpochMs': endEpochMs,
+        'targetDurationMs': targetDurationMs,
+        'graceSeconds': graceSeconds,
+      }) ??
+      false;
+
+  static Future<Map<String, dynamic>> focusStatus(String attemptId) async =>
+      Map<String, dynamic>.from(
+        await _channel.invokeMethod<Map>('focusStatus', {
+              'attemptId': attemptId,
+            }) ??
+            const {},
+      );
+
+  static Future<void> stopFocus(String attemptId) =>
+      _channel.invokeMethod<void>('stopFocus', {'attemptId': attemptId});
 }

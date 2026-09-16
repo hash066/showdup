@@ -174,6 +174,17 @@ class Restrictions {
   );
 }
 
+class GuardrailProfile {
+  const GuardrailProfile({this.packages = const []});
+  final List<String> packages;
+
+  Map<String, dynamic> toJson() => {'packages': packages};
+  factory GuardrailProfile.fromJson(Map<String, dynamic> json) =>
+      GuardrailProfile(
+        packages: (json['packages'] as List? ?? const []).cast<String>(),
+      );
+}
+
 class Commitment {
   const Commitment({
     required this.id,
