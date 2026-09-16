@@ -1,0 +1,246 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Alarms.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Alarms",
+      "w": 390,
+      "x": 2350,
+      "y": 0
+    },
+    "Animals.dc.html": {
+      "h": 1280,
+      "page": "companion",
+      "title": "Illustrated animals (option)",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "Battle.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Battle",
+      "w": 390,
+      "x": 1880,
+      "y": 964
+    },
+    "Catch.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Setup 3 · add a catch",
+      "w": 390,
+      "x": 1880,
+      "y": 0
+    },
+    "Caught.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Caught (native)",
+      "w": 390,
+      "x": 2820,
+      "y": 0
+    },
+    "Commitments.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Commitments",
+      "w": 390,
+      "x": 940,
+      "y": 964
+    },
+    "Companion.dc.html": {
+      "h": 1200,
+      "page": "companion",
+      "title": "Dot companion (default)",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "History.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "History",
+      "w": 390,
+      "x": 1410,
+      "y": 964
+    },
+    "Icons.dc.html": {
+      "h": 640,
+      "page": "brand",
+      "title": "Icons",
+      "w": 1440,
+      "x": 1520,
+      "y": 680
+    },
+    "Main.dc.html": {
+      "h": 1480,
+      "page": "brand",
+      "title": "Foundations",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Motion.dc.html": {
+      "h": 560,
+      "page": "brand",
+      "title": "Bell to person",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "Onboarding.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Onboarding",
+      "w": 390,
+      "x": 0,
+      "y": 0
+    },
+    "Paywall.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Paywall (RevenueCat)",
+      "w": 390,
+      "x": 2820,
+      "y": 964
+    },
+    "Proof.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Proof in progress",
+      "w": 390,
+      "x": 0,
+      "y": 964
+    },
+    "Released.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Released",
+      "w": 390,
+      "x": 470,
+      "y": 964
+    },
+    "Settings.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Settings",
+      "w": 390,
+      "x": 2350,
+      "y": 964
+    },
+    "When.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Setup 2 · when",
+      "w": 390,
+      "x": 1410,
+      "y": 0
+    },
+    "Why.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Why this works",
+      "w": 390,
+      "x": 470,
+      "y": 0
+    },
+    "Wizard.dc.html": {
+      "h": 844,
+      "is_interactive": true,
+      "page": "screens",
+      "title": "Setup 1 · preset",
+      "w": 390,
+      "x": 940,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-17T02:40:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "page": "brand",
+    "view": "canvas"
+  },
+  "notes": {
+    "brandTitle": {
+      "kind": "title1",
+      "maxW": 2960,
+      "page": "brand",
+      "text": "ShowdUp · brand",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "companionTitle": {
+      "kind": "title1",
+      "maxW": 2960,
+      "page": "companion",
+      "text": "Companion · pick one",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    },
+    "screensTitle": {
+      "kind": "title1",
+      "maxW": 3210,
+      "page": "screens",
+      "text": "1.0 screens · tap through from Onboarding",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Motion.dc.html",
+    "Icons.dc.html",
+    "Companion.dc.html",
+    "Animals.dc.html",
+    "Onboarding.dc.html",
+    "Why.dc.html",
+    "Wizard.dc.html",
+    "When.dc.html",
+    "Catch.dc.html",
+    "Alarms.dc.html",
+    "Caught.dc.html",
+    "Proof.dc.html",
+    "Released.dc.html",
+    "Commitments.dc.html",
+    "History.dc.html",
+    "Battle.dc.html",
+    "Settings.dc.html",
+    "Paywall.dc.html"
+  ],
+  "pages": [
+    {
+      "id": "brand",
+      "name": "Brand"
+    },
+    {
+      "id": "companion",
+      "name": "Companion"
+    },
+    {
+      "id": "screens",
+      "name": "1.0 screens"
+    }
+  ],
+  "title": "ShowdUp brand board"
+}
