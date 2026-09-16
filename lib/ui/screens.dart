@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/theme.dart';
 import '../core/config.dart';
+import '../core/features.dart';
 import '../core/scheduling.dart';
 import '../models/attempt.dart';
 import '../models/commitment.dart';
@@ -20,6 +21,7 @@ import '../services/billing.dart';
 import '../services/controller.dart';
 import '../services/social_service.dart';
 import 'app.dart';
+import 'keys.dart';
 import 'widgets.dart';
 import 'wizard.dart';
 
@@ -434,12 +436,15 @@ class TodayScreen extends ConsumerWidget {
                     active.isEmpty
                         ? drafts.isNotEmpty
                               ? 'Enable the required Android access to activate ${drafts.first.title}. Nothing is scheduled while it remains a draft.'
-                              : 'A walk, Focus session, workout, place arrival or accepted problem. Pick something small enough to repeat.'
+                              : 'A walk, gym visit, place arrival, Focus session or accepted problem. Pick something small enough to repeat.'
                         : 'Your next window opens ${DateFormat('EEE, MMM d · HH:mm').format(nextWindow(active.first.schedule, now).toLocal())}. Reminders follow your chosen schedule.',
                     style: const TextStyle(color: T.muted, height: 1.6),
                   ),
                   const SizedBox(height: 24),
                   FilledButton(
+                    key: active.isEmpty && drafts.isEmpty
+                        ? ShowdKeys.createFirstCommitment
+                        : null,
                     onPressed: () => active.isEmpty
                         ? drafts.isNotEmpty
                               ? openWizard(context, commitment: drafts.first)
@@ -1164,6 +1169,9 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                       ),
                       const SizedBox(height: 20),
                       Text(
+                        key: terminal
+                            ? ShowdKeys.attemptOutcome(a.state)
+                            : null,
                         terminal
                             ? _terminalCopy(a.state)
                             : open
@@ -1267,6 +1275,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                   ),
                 ],
                 TextButton(
+                  key: ShowdKeys.endToday,
                   onPressed: busy ? null : () => run(() => app.end(a)),
                   child: const Text(
                     'End today without completing',
@@ -1409,12 +1418,6 @@ class _PermissionsScreenState extends State<PermissionsScreen>
           'Let Android deliver reminders at your chosen time. Without this, they may be delayed.',
           'exactAlarm',
           status?.exactAlarm,
-        ),
-        _permission(
-          'Physical activity',
-          'Read the phone’s step counter for steps commitments.',
-          'activityRecognition',
-          status?.activityRecognition,
         ),
         _permission(
           'Precise location',
@@ -1699,7 +1702,7 @@ class SettingsScreen extends ConsumerWidget {
           context,
           Icons.notifications_active_outlined,
           'Permissions & reliability',
-          'Steps, location, reminders and battery',
+          'Location, reminders and battery',
           () => Navigator.push(
             context,
             MaterialPageRoute<void>(builder: (_) => const PermissionsScreen()),
@@ -1875,14 +1878,16 @@ class PrivacyScreen extends StatelessWidget {
             'Selected-app restrictions',
             'Focus users can optionally enable Android Accessibility access to identify only which selected foreground app opens and reset a local timer after ten seconds. Pro can additionally show a blocking screen. ShowdUp does not read screen content, typed text, notifications or passwords. ShowdUp, Android Settings, permission controls, the default dialer and recognized emergency packages are excluded. You can disable the service at any time in Android Accessibility settings.',
           ),
-          (
-            'Health Connect workouts',
-            'Workout verification reads only exercise-session time, type, recording method, source app and device attribution. Manual and unknown records, routes, heart rate and other health data are not read. The evidence remains on this device.',
-          ),
-          (
-            'LeetCode',
-            'ShowdUp sends the username you enter to LeetCode and reads recent accepted submissions visible on that public profile. It never asks for or stores a LeetCode password or session cookie. If the public service is unavailable, the attempt is unable to verify rather than missed.',
-          ),
+          if (Features.workout)
+            (
+              'Health Connect workouts',
+              'Workout verification reads only exercise-session time, type, recording method, source app and device attribution. Manual and unknown records, routes, heart rate and other health data are not read. The evidence remains on this device.',
+            ),
+          if (Features.leetcode)
+            (
+              'LeetCode',
+              'ShowdUp sends the username you enter to LeetCode and reads recent accepted submissions visible on that public profile. It never asks for or stores a LeetCode password or session cookie. If the public service is unavailable, the attempt is unable to verify rather than missed.',
+            ),
           (
             'Pet overlay',
             'The optional “Display over other apps” permission shows your pet, score and accountability controls over other apps. A persistent notification identifies ShowdUp while it runs. The overlay does not read or capture content from the app underneath it and can be disabled from the overlay, notification or ShowdUp settings.',

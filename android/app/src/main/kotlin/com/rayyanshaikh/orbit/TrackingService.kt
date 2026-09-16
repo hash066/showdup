@@ -16,7 +16,11 @@ import org.json.*
 class TrackingService:Service(),SensorEventListener{
  companion object{
   var hasLocation=false
-  fun start(c:Context,type:String,data:JSONObject):Boolean=try{ContextCompat.startForegroundService(c,Intent(c,TrackingService::class.java).setAction("start").putExtra("type",type).putExtra("data",data.toString()));true}catch(e:Exception){Log.e("ShowdUpTracking","Foreground verification service start denied for $type",e);AlarmEngine.diagnostic(c,"tracking_start",e.message?:"Android denied starting verification.");false}
+  /** Step-counter tracking is retired in 1.0: the manifest no longer declares the
+   * health foreground-service type or physical-activity permission. Legacy step
+   * attempts are recorded as unable to verify instead of starting a service
+   * that would fail to enter the foreground. */
+  fun start(c:Context,type:String,data:JSONObject):Boolean=if(type=="steps"){val id=data.optString("attemptId");if(id.isNotEmpty())AlarmEngine.prefs(c).edit().putString("failure:$id",JSONObject().put("type",type).put("reason","unsupported").put("failedAt",System.currentTimeMillis()).toString()).apply();false}else try{ContextCompat.startForegroundService(c,Intent(c,TrackingService::class.java).setAction("start").putExtra("type",type).putExtra("data",data.toString()));true}catch(e:Exception){Log.e("ShowdUpTracking","Foreground verification service start denied for $type",e);AlarmEngine.diagnostic(c,"tracking_start",e.message?:"Android denied starting verification.");false}
   fun stop(c:Context,id:String){c.startService(Intent(c,TrackingService::class.java).setAction("stop").putExtra("attemptId",id))}
  }
  private val tracks=mutableMapOf<String,JSONObject>()
@@ -34,7 +38,7 @@ class TrackingService:Service(),SensorEventListener{
  override fun onBind(i:Intent?):IBinder?=null
  override fun onStartCommand(i:Intent?,flags:Int,startId:Int):Int{
   if(i?.action=="stop"){remove(i.getStringExtra("attemptId")?:"");return START_NOT_STICKY}
-  if(i==null){for((k,v)in AlarmEngine.prefs(this).all)if(k.startsWith("track:")){val j=JSONObject(v as String);if(j.optLong("untilEpochMs")>System.currentTimeMillis())tracks[k.removePrefix("track:")]=j}}
+  if(i==null){for((k,v)in AlarmEngine.prefs(this).all)if(k.startsWith("track:")){val j=JSONObject(v as String);if(j.optString("type")=="steps"){AlarmEngine.prefs(this).edit().remove(k).apply();continue};if(j.optLong("untilEpochMs")>System.currentTimeMillis())tracks[k.removePrefix("track:")]=j}}
   else{
    val input=JSONObject(i.getStringExtra("data")?:"{}")
    val id=input.getString("attemptId")
@@ -52,7 +56,7 @@ class TrackingService:Service(),SensorEventListener{
   if(tracks.isEmpty()){stopSelf();return START_NOT_STICKY}
   hasLocation=tracks.values.any{it.optString("type") in setOf("location","walk")}
   val notification=NotificationCompat.Builder(this,"tracking").setSmallIcon(R.drawable.ic_notification).setContentTitle("Showing up, one step at a time").setContentText("Verification is active. Tap to see progress or end today.").setOngoing(true).setContentIntent(AlarmEngine.launch(this,tracks.keys.first())).build()
-  try{if(Build.VERSION.SDK_INT>=29){var type=0;if(hasLocation)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;if(tracks.values.any{it.optString("type")=="steps"}&&Build.VERSION.SDK_INT>=34)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;startForeground(910,notification,type)}else startForeground(910,notification)}catch(e:Exception){Log.e("ShowdUpTracking","Unable to enter foreground for verification",e);AlarmEngine.diagnostic(this,"tracking_foreground",e.message?:"Android denied verification foreground service.");for((id,j)in tracks.toMap())fail(id,j,"permission_denied");stopSelf();return START_NOT_STICKY}
+  try{if(Build.VERSION.SDK_INT>=29){var type=0;if(hasLocation)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;startForeground(910,notification,type)}else startForeground(910,notification)}catch(e:Exception){Log.e("ShowdUpTracking","Unable to enter foreground for verification",e);AlarmEngine.diagnostic(this,"tracking_foreground",e.message?:"Android denied verification foreground service.");for((id,j)in tracks.toMap())fail(id,j,"permission_denied");stopSelf();return START_NOT_STICKY}
   try{
    if(!stepsRegistered&&tracks.values.any{it.optString("type")=="steps"}){val sensor=sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);if(sensor==null){for((id,j)in tracks.toMap())if(j.optString("type")=="steps")fail(id,j,"sensor_missing")}else stepsRegistered=sensors.registerListener(this,sensor,SensorManager.SENSOR_DELAY_NORMAL)}
    if(hasLocation&&!locationRegistered){fused.requestLocationUpdates(LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY,60000).setMinUpdateIntervalMillis(30000).build(),callback,Looper.getMainLooper());locationRegistered=true}

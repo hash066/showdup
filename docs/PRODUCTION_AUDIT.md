@@ -99,7 +99,7 @@ Firebase CLI is signed into any other account.
   output exposed it; re-authentication must use the designated Harshita account
   and pass the deployment account guard.
 - [ ] Create and activate Google Play subscriptions `showdup_pro_monthly` and
-  `showdup_pro_annual`; configure ₹80 monthly and ₹400 annual India prices,
+  `showdup_pro_annual`; configure ₹79 monthly and ₹399 annual India prices,
   countries, offers/trial and tax. Harshita's Play developer identity is under
   review, phone verification is consequently locked, and Create app is
   currently disabled.

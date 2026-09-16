@@ -5,11 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:showdup/main.dart';
+import 'package:showdup/core/features.dart';
 import 'package:showdup/core/theme.dart';
 import 'package:showdup/models/enums.dart';
 import 'package:showdup/services/controller.dart';
 import 'package:showdup/services/repository.dart';
 import 'package:showdup/ui/app.dart';
+import 'package:showdup/ui/keys.dart';
 import 'package:showdup/ui/screens.dart';
 import 'package:showdup/ui/wizard.dart';
 
@@ -27,15 +29,20 @@ void main() {
         ShowdUpApp(prefs: await SharedPreferences.getInstance()),
       );
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Explore the app · local preview'));
-      await tester.tap(find.text('Explore the app · local preview'));
+      await tester.ensureVisible(find.byKey(ShowdKeys.previewEntry));
+      await tester.tap(find.byKey(ShowdKeys.previewEntry));
       await tester.pumpAndSettle();
-      expect(find.textContaining('LOCAL PREVIEW'), findsOneWidget);
+      expect(find.byKey(ShowdKeys.previewBanner), findsOneWidget);
       expect(find.text('Morning walk'), findsOneWidget);
-      for (final tab in ['Commitments', 'History', 'Settings', 'Alarms']) {
-        await tester.tap(find.text(tab).last);
+      for (final tab in [
+        ShowdKeys.navCommitments,
+        ShowdKeys.navHistory,
+        ShowdKeys.navSettings,
+        ShowdKeys.navAlarms,
+      ]) {
+        await tester.tap(find.byKey(tab));
         await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull, reason: tab);
+        expect(tester.takeException(), isNull, reason: tab.value);
       }
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
@@ -77,14 +84,14 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull, reason: 'screen overflow');
         if (state == AttemptState.pending) {
-          expect(find.text('End today without completing'), findsOneWidget);
-        } else if (state == AttemptState.unverifiable) {
-          expect(
-            find.textContaining('Your streak is preserved'),
-            findsOneWidget,
-          );
-        } else if (state == AttemptState.completed) {
-          expect(find.text('Done'), findsOneWidget);
+          expect(find.byKey(ShowdKeys.endToday), findsOneWidget);
+        } else {
+          final outcome = find.byKey(ShowdKeys.attemptOutcome(state));
+          expect(outcome, findsOneWidget);
+          if (state == AttemptState.unverifiable) {
+            // Honesty contract: a sensor failure never costs the streak.
+            expect(tester.widget<Text>(outcome).data, contains('streak'));
+          }
         }
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
@@ -111,7 +118,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Create a commitment  +'), findsOneWidget);
+    expect(find.byKey(ShowdKeys.createFirstCommitment), findsOneWidget);
     expect(tester.takeException(), isNull, reason: 'screen overflow');
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
@@ -132,22 +139,18 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('STEP 1 OF 2'), findsOneWidget);
-    for (final preset in [
-      'Walk / run',
-      'Gym',
-      'Arrive',
-      'Focus',
-      'Workout',
-      'LeetCode',
-    ]) {
-      expect(find.text(preset), findsOneWidget);
+    expect(find.byKey(ShowdKeys.wizardStep(0)), findsOneWidget);
+    for (final preset in CommitmentKind.values) {
+      expect(
+        find.byKey(ShowdKeys.wizardPreset(preset)),
+        Features.presetEnabled(preset) ? findsOneWidget : findsNothing,
+        reason: preset.wire,
+      );
     }
-    await tester.ensureVisible(find.text('Continue  →'));
-    await tester.tap(find.text('Continue  →'));
+    await tester.ensureVisible(find.byKey(ShowdKeys.wizardNext));
+    await tester.tap(find.byKey(ShowdKeys.wizardNext));
     await tester.pumpAndSettle();
-    expect(find.text('STEP 2 OF 2'), findsOneWidget);
-    expect(find.text('Guardrails and confirmation.'), findsOneWidget);
+    expect(find.byKey(ShowdKeys.wizardStep(1)), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await tester.pump();

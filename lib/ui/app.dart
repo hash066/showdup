@@ -16,6 +16,7 @@ import 'widgets.dart';
 import 'screens.dart';
 import 'battle_screen.dart';
 import 'coach_marks.dart';
+import 'keys.dart';
 
 final appProvider = ChangeNotifierProvider<AppController>(
   (ref) => throw StateError('App session not initialized'),
@@ -235,6 +236,7 @@ class WelcomeScreen extends StatelessWidget {
                 const SizedBox(height: 8),
                 Center(
                   child: TextButton(
+                    key: ShowdKeys.previewEntry,
                     onPressed: onPreview,
                     child: const Text('Explore the app · local preview'),
                   ),
@@ -524,6 +526,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
               children: [
                 if (app.preview)
                   Container(
+                    key: ShowdKeys.previewBanner,
                     width: double.infinity,
                     color: T.accent.withValues(alpha: .12),
                     padding: const EdgeInsets.symmetric(
@@ -567,25 +570,30 @@ class _HomeShellState extends ConsumerState<HomeShell>
         onDestinationSelected: (v) => setState(() => tab = v),
         destinations: const [
           NavigationDestination(
+            key: ShowdKeys.navAlarms,
             icon: Icon(Icons.alarm_outlined),
             selectedIcon: Icon(Icons.alarm_rounded),
             label: 'Alarms',
           ),
           NavigationDestination(
+            key: ShowdKeys.navCommitments,
             icon: Icon(Icons.flag_outlined),
             selectedIcon: Icon(Icons.flag_rounded),
             label: 'Commitments',
           ),
           NavigationDestination(
+            key: ShowdKeys.navHistory,
             icon: Icon(Icons.bar_chart_rounded),
             label: 'History',
           ),
           NavigationDestination(
+            key: ShowdKeys.navBattle,
             icon: Icon(Icons.emoji_events_outlined),
             selectedIcon: Icon(Icons.emoji_events_rounded),
             label: 'Battle',
           ),
           NavigationDestination(
+            key: ShowdKeys.navSettings,
             icon: Icon(Icons.tune_rounded),
             label: 'Settings',
           ),

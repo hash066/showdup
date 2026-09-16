@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/features.dart';
 import '../core/theme.dart';
 import '../models/commitment.dart';
 import '../models/verifier_config.dart';
@@ -17,6 +18,7 @@ import 'app.dart';
 import 'widgets.dart';
 import 'screens.dart';
 import 'coach_marks.dart';
+import 'keys.dart';
 
 class CommitmentWizard extends ConsumerStatefulWidget {
   const CommitmentWizard({super.key, this.existing});
@@ -524,7 +526,10 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
               child: ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
-                  Eyebrow('Step ${page + 1} of 2'),
+                  Eyebrow(
+                    'Step ${page + 1} of 2',
+                    key: ShowdKeys.wizardStep(page),
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     [
@@ -593,6 +598,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
                     ],
                     Expanded(
                       child: FilledButton(
+                        key: ShowdKeys.wizardNext,
                         onPressed: busy ? null : next,
                         child: Text(
                           busy
@@ -642,16 +648,18 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       spacing: 10,
       runSpacing: 10,
       children: [
-        _typeCard(CommitmentKind.walk, Icons.directions_run, 'Walk / run'),
-        _typeCard(CommitmentKind.gym, Icons.fitness_center, 'Gym'),
-        _typeCard(CommitmentKind.arrive, Icons.place_outlined, 'Arrive'),
-        _typeCard(CommitmentKind.focus, Icons.center_focus_strong, 'Focus'),
-        _typeCard(
-          CommitmentKind.workout,
-          Icons.health_and_safety_outlined,
-          'Workout',
-        ),
-        _typeCard(CommitmentKind.leetcode, Icons.code_rounded, 'LeetCode'),
+        for (final (preset, icon, label) in [
+          (CommitmentKind.walk, Icons.directions_run, 'Walk / run'),
+          (CommitmentKind.gym, Icons.fitness_center, 'Gym'),
+          (CommitmentKind.arrive, Icons.place_outlined, 'Arrive'),
+          (CommitmentKind.focus, Icons.center_focus_strong, 'Focus'),
+          (CommitmentKind.workout, Icons.health_and_safety_outlined, 'Workout'),
+          (CommitmentKind.leetcode, Icons.code_rounded, 'LeetCode'),
+        ])
+          // A disabled preset stays visible only while editing a commitment
+          // that already uses it, so existing setups remain editable.
+          if (Features.presetEnabled(preset) || kind == preset)
+            _typeCard(preset, icon, label),
       ],
     ),
     const SizedBox(height: 24),
@@ -895,6 +903,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     IconData icon,
     String label,
   ) => SizedBox(
+    key: ShowdKeys.wizardPreset(value),
     width: 150,
     child: InkWell(
       onTap: () => setState(() {
