@@ -171,7 +171,7 @@ class AppController extends ChangeNotifier {
         .where((item) => item.uid == myUid)
         .firstOrNull;
     return PetSnapshot(
-      mascot: local?.selectedMascot ?? MascotId.fox,
+      mascot: local?.selectedMascot ?? MascotId.dot,
       mood: PetScoring.mood(
         recentAttempts: recent,
         currentSnoozes: currentSnoozes,

@@ -1,10 +1,13 @@
 import 'attempt.dart';
 import 'enums.dart';
 
+/// Companion characters. Wire values are persisted locally and in Battles.
 enum MascotId {
+  /// The brand dot with a face. Free for everyone and the default.
+  dot('dot', '●', 'Dot'),
   fox('fox', '🦊', 'Fox'),
   cat('cat', '🐱', 'Cat'),
-  puppy('puppy', '🐶', 'Puppy'),
+  puppy('puppy', '🐶', 'Pup'),
   penguin('penguin', '🐧', 'Penguin'),
   capybara('capybara', '🦫', 'Capybara');
 
@@ -13,9 +16,12 @@ enum MascotId {
   final String fallbackGlyph;
   final String label;
 
+  /// Illustrated animals unlock with ShowdUp Pro.
+  bool get isPremium => this != MascotId.dot;
+
   static MascotId fromWire(String? value) => values.firstWhere(
     (item) => item.wire == value,
-    orElse: () => MascotId.fox,
+    orElse: () => MascotId.dot,
   );
 }
 

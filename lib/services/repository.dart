@@ -46,7 +46,7 @@ class LocalRepository implements Repository {
   final Set<String> _simplifyScheduleWhenIdle = {};
   int? _lastRolloverMs;
   late AppUser _profile;
-  MascotId _selectedMascot = MascotId.fox;
+  MascotId _selectedMascot = MascotId.dot;
   bool _petCracked = false;
   int _burstCount = 0;
   int? _crackedAtMs;
@@ -153,7 +153,10 @@ class LocalRepository implements Repository {
     if (notify && !_changes.isClosed) _changes.add(null);
   }
 
-  MascotId get selectedMascot => _selectedMascot;
+  /// Animals are a Pro unlock. The stored choice survives a lapsed
+  /// subscription and comes back on renewal; until then the dot shows.
+  MascotId get selectedMascot =>
+      _selectedMascot.isPremium && !_profile.isPro ? MascotId.dot : _selectedMascot;
   bool get petCracked => _petCracked;
   int get burstCount => _burstCount;
   int weeklyPetPenalty(DateTime monday) =>
@@ -163,6 +166,9 @@ class LocalRepository implements Repository {
       100;
 
   Future<void> setMascot(MascotId mascot) => _exclusive(() async {
+    if (mascot.isPremium && !_profile.isPro) {
+      throw StateError('Animal companions unlock with ShowdUp Pro.');
+    }
     _selectedMascot = mascot;
     await _save();
   });
@@ -780,7 +786,7 @@ class LocalRepository implements Repository {
             displayName: 'You',
             timezone: _profile.timezone,
           );
-          _selectedMascot = MascotId.fox;
+          _selectedMascot = MascotId.dot;
           _petCracked = false;
           _burstCount = 0;
           _crackedAtMs = null;
