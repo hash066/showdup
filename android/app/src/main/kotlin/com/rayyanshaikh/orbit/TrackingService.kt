@@ -16,11 +16,8 @@ import org.json.*
 class TrackingService:Service(),SensorEventListener{
  companion object{
   var hasLocation=false
-  /** Step-counter tracking is retired in 1.0: the manifest no longer declares the
-   * health foreground-service type or physical-activity permission. Legacy step
-   * attempts are recorded as unable to verify instead of starting a service
-   * that would fail to enter the foreground. */
-  fun start(c:Context,type:String,data:JSONObject):Boolean=if(type=="steps"){val id=data.optString("attemptId");if(id.isNotEmpty())AlarmEngine.prefs(c).edit().putString("failure:$id",JSONObject().put("type",type).put("reason","unsupported").put("failedAt",System.currentTimeMillis()).toString()).apply();false}else try{ContextCompat.startForegroundService(c,Intent(c,TrackingService::class.java).setAction("start").putExtra("type",type).putExtra("data",data.toString()));true}catch(e:Exception){Log.e("ShowdUpTracking","Foreground verification service start denied for $type",e);AlarmEngine.diagnostic(c,"tracking_start",e.message?:"Android denied starting verification.");false}
+  /** Steps run as a health foreground service; places and walks as location. */
+  fun start(c:Context,type:String,data:JSONObject):Boolean=try{ContextCompat.startForegroundService(c,Intent(c,TrackingService::class.java).setAction("start").putExtra("type",type).putExtra("data",data.toString()));true}catch(e:Exception){Log.e("ShowdUpTracking","Foreground verification service start denied for $type",e);AlarmEngine.diagnostic(c,"tracking_start",e.message?:"Android denied starting verification.");false}
   fun stop(c:Context,id:String){c.startService(Intent(c,TrackingService::class.java).setAction("stop").putExtra("attemptId",id))}
  }
  private val tracks=mutableMapOf<String,JSONObject>()
@@ -38,7 +35,7 @@ class TrackingService:Service(),SensorEventListener{
  override fun onBind(i:Intent?):IBinder?=null
  override fun onStartCommand(i:Intent?,flags:Int,startId:Int):Int{
   if(i?.action=="stop"){remove(i.getStringExtra("attemptId")?:"");return START_NOT_STICKY}
-  if(i==null){for((k,v)in AlarmEngine.prefs(this).all)if(k.startsWith("track:")){val j=JSONObject(v as String);if(j.optString("type")=="steps"){AlarmEngine.prefs(this).edit().remove(k).apply();continue};if(j.optLong("untilEpochMs")>System.currentTimeMillis())tracks[k.removePrefix("track:")]=j}}
+  if(i==null){for((k,v)in AlarmEngine.prefs(this).all)if(k.startsWith("track:")){val j=JSONObject(v as String);if(j.optLong("untilEpochMs")>System.currentTimeMillis())tracks[k.removePrefix("track:")]=j}}
   else{
    val input=JSONObject(i.getStringExtra("data")?:"{}")
    val id=input.getString("attemptId")
@@ -55,14 +52,34 @@ class TrackingService:Service(),SensorEventListener{
   }
   if(tracks.isEmpty()){stopSelf();return START_NOT_STICKY}
   hasLocation=tracks.values.any{it.optString("type") in setOf("location","walk")}
-  val notification=NotificationCompat.Builder(this,"tracking").setSmallIcon(R.drawable.ic_notification).setContentTitle("Showing up, one step at a time").setContentText("Verification is active. Tap to see progress or end today.").setOngoing(true).setContentIntent(AlarmEngine.launch(this,tracks.keys.first())).build()
-  try{if(Build.VERSION.SDK_INT>=29){var type=0;if(hasLocation)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;startForeground(910,notification,type)}else startForeground(910,notification)}catch(e:Exception){Log.e("ShowdUpTracking","Unable to enter foreground for verification",e);AlarmEngine.diagnostic(this,"tracking_foreground",e.message?:"Android denied verification foreground service.");for((id,j)in tracks.toMap())fail(id,j,"permission_denied");stopSelf();return START_NOT_STICKY}
+  val notification=progressNotification(tracks.keys.first(),0.0)
+  try{if(Build.VERSION.SDK_INT>=29){var type=0;if(hasLocation)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;if(tracks.values.any{it.optString("type")=="steps"}&&Build.VERSION.SDK_INT>=34)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;startForeground(910,notification,type)}else startForeground(910,notification)}catch(e:Exception){Log.e("ShowdUpTracking","Unable to enter foreground for verification",e);AlarmEngine.diagnostic(this,"tracking_foreground",e.message?:"Android denied verification foreground service.");for((id,j)in tracks.toMap())fail(id,j,"permission_denied");stopSelf();return START_NOT_STICKY}
   try{
    if(!stepsRegistered&&tracks.values.any{it.optString("type")=="steps"}){val sensor=sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);if(sensor==null){for((id,j)in tracks.toMap())if(j.optString("type")=="steps")fail(id,j,"sensor_missing")}else stepsRegistered=sensors.registerListener(this,sensor,SensorManager.SENSOR_DELAY_NORMAL)}
    if(hasLocation&&!locationRegistered){fused.requestLocationUpdates(LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY,60000).setMinUpdateIntervalMillis(30000).build(),callback,Looper.getMainLooper());locationRegistered=true}
   }catch(e:SecurityException){Log.e("ShowdUpTracking","Verification permission missing",e);AlarmEngine.diagnostic(this,"tracking_permission",e.message?:"Verification permission missing.");for((id,j)in tracks.toMap())fail(id,j,"permission_denied")}
   for((id,j)in tracks)persist(id,j)
   handler.removeCallbacks(ticker);handler.post(ticker);return START_STICKY
+ }
+ private var lastPercent=-1
+ /** Title of the alarm being proven, from the native alarm record. */
+ private fun titleFor(id:String)=AlarmEngine.prefs(this).getString("alarm:$id",null)?.let{try{JSONObject(it).optString("title")}catch(_:Exception){null}}?.takeIf{it.isNotBlank()}?:"Your alarm"
+ /** Android 16 shows a progress bar natively; older versions get a classic bar. */
+ private fun progressNotification(id:String,fraction:Double):Notification{
+  val percent=(fraction.coerceIn(0.0,1.0)*100).toInt()
+  val title="Proving: ${titleFor(id)}"
+  val body=if(percent==0)"Pocket the phone. It's counting." else "$percent% there. Keep going."
+  if(Build.VERSION.SDK_INT>=36){
+   return Notification.Builder(this,"tracking").setSmallIcon(R.drawable.ic_notification).setColor(Brand.accent).setContentTitle(title).setContentText(body).setOngoing(true).setContentIntent(AlarmEngine.launch(this,id))
+    .setStyle(Notification.ProgressStyle().setStyledByProgress(true).setProgress(percent).setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Brand.accent)))).build()
+  }
+  return NotificationCompat.Builder(this,"tracking").setSmallIcon(R.drawable.ic_notification).setColor(Brand.accent).setContentTitle(title).setContentText(body).setOngoing(true).setOnlyAlertOnce(true).setProgress(100,percent,false).setContentIntent(AlarmEngine.launch(this,id)).build()
+ }
+ private fun showProgress(id:String,fraction:Double){
+  val percent=(fraction.coerceIn(0.0,1.0)*100).toInt()
+  if(percent==lastPercent||tracks.keys.firstOrNull()!=id)return
+  lastPercent=percent
+  try{getSystemService(NotificationManager::class.java).notify(910,progressNotification(id,fraction))}catch(_:Exception){}
  }
  private fun persist(id:String,j:JSONObject){AlarmEngine.prefs(this).edit().putString("track:$id",j.toString()).apply()}
  override fun onAccuracyChanged(s:Sensor?,a:Int){}
@@ -77,6 +94,7 @@ class TrackingService:Service(),SensorEventListener{
   }
  private fun stepProgress(id:String,j:JSONObject){val total=j.optLong("credited")+(j.optLong("last")-j.optLong("baseline")).coerceAtLeast(0);val elapsed=System.currentTimeMillis()-j.getLong("startedAt");val target=j.getInt("targetSteps");val ready=total>=target&&elapsed>=j.optLong("minDurationMs",60000)&&total/(elapsed/60000.0)<=250
   Events.emit("steps",mapOf("type" to if(ready)"target_reached" else "progress","attemptId" to id,"stepsSinceBaseline" to total,"elapsedMs" to elapsed))
+  showProgress(id,total.toDouble()/target)
   if(ready)submit(id,"steps",mapOf("stepsSinceBaseline" to total,"elapsedMs" to elapsed,"baselineCapturedAt" to j.getLong("startedAt")))
  }
  private fun onLocation(l:Location){for((id,j)in tracks.toMap())when(j.optString("type")){
@@ -91,6 +109,7 @@ class TrackingService:Service(),SensorEventListener{
   val fix=mapOf("lat" to l.latitude,"lng" to l.longitude,"accuracyM" to l.accuracy.toDouble(),"isMock" to mock,"epochMs" to epoch)
   val ready=valid&&!stale&&dwell>=j.getLong("dwellMs")&&previous!=null
   Events.emit("location",mapOf("type" to if(ready)"dwell_satisfied"else"dwell_progress","attemptId" to id,"distanceM" to distance[0].toDouble(),"dwellMs" to dwell,"fix" to fix))
+  showProgress(id,dwell.toDouble()/j.getLong("dwellMs"))
   if(ready){
    submit(id,"location",fix+mapOf("dwellMs" to dwell,"enteredAt" to j.getLong("enteredAt"),"previousFix" to mapOf("lat" to previous!!.getDouble("lat"),"lng" to previous.getDouble("lng"),"epochMs" to previous.getLong("epochMs"))))
    continue
@@ -110,6 +129,7 @@ class TrackingService:Service(),SensorEventListener{
   val atDestination=if(mode=="destination"&&j.has("lat")&&j.has("lng")){val remaining=FloatArray(1);Location.distanceBetween(l.latitude,l.longitude,j.getDouble("lat"),j.getDouble("lng"),remaining);remaining[0]<=150f&&total>=100}else false
   val ready=when(mode){"distance"->total>=j.optInt("targetDistanceM",1000);"destination"->atDestination;else->active>=j.optLong("targetDurationMs",900000)}
   Events.emit("location",mapOf("type" to if(ready)"walk_satisfied" else "walk_progress","attemptId" to id,"distanceM" to total,"dwellMs" to active,"fix" to fix));persist(id,j)
+  showProgress(id,when(mode){"distance"->total/j.optInt("targetDistanceM",1000);"destination"->if(ready)1.0 else 0.0;else->active.toDouble()/j.optLong("targetDurationMs",900000)})
   if(ready)submit(id,"walk",mapOf("mode" to mode,"distanceM" to total,"activeDurationMs" to active)+fix)
  }
  /** Completion is local and immediate. The event reaches Flutter when it is alive;

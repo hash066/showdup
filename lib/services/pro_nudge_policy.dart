@@ -13,17 +13,29 @@ class ProNudgeMoment {
   final String body;
 }
 
-/// Turns local proof into contextual upgrade moments without uploading or
-/// inspecting screen content. Each key is stable so it is shown only once.
+/// Turns local proof into quiet upgrade moments around catches, snoozes and
+/// misses. Nothing is uploaded. Each key is stable so it shows only once.
 class ProNudgePolicy {
   const ProNudgePolicy._();
 
   static ProNudgeMoment? next(
     Iterable<Attempt> attempts, {
     required bool isPro,
+    int reaches = 0,
   }) {
     if (isPro) return null;
     final values = attempts.toList();
+
+    final reachMilestone = (reaches ~/ 10) * 10;
+    if (reachMilestone >= 10) {
+      return ProNudgeMoment(
+        key: 'reach:$reachMilestone',
+        title: 'You reached for it $reachMilestone times.',
+        body:
+            'And still showed up. Pro can hold every app you reach for, on every alarm.',
+      );
+    }
+
     final focusResets = values.fold<int>(
       0,
       (sum, attempt) =>
@@ -33,9 +45,9 @@ class ProNudgePolicy {
     if (resetMilestone >= 50) {
       return ProNudgeMoment(
         key: 'focus:$resetMilestone',
-        title: '$resetMilestone distraction attempts noticed.',
+        title: '$resetMilestone times an app pulled you away.',
         body:
-            'ShowdUp kept the proof local. Pro can turn those interruptions into an immediate block during your commitment window.',
+            'Pro can keep those apps closed until the timer is done, instead of restarting it.',
       );
     }
 
@@ -47,26 +59,27 @@ class ProNudgePolicy {
     if (snoozeMilestone >= 5) {
       return ProNudgeMoment(
         key: 'snooze:$snoozeMilestone',
-        title: '$snoozeMilestone snoozes are a pattern.',
+        title: '$snoozeMilestone snoozes. That’s a pattern.',
         body:
-            'Pro can block your selected escape apps while the promise is active, so the next alarm has less work to do.',
+            'Holding the app you escape into makes the next snooze less tempting. Pro holds more than one.',
       );
     }
 
     final misses = values
         .where(
           (attempt) =>
-              attempt.state == AttemptState.expired ||
-              attempt.state == AttemptState.abandoned,
+              !attempt.restCovered &&
+              (attempt.state == AttemptState.expired ||
+                  attempt.state == AttemptState.abandoned),
         )
         .length;
     final missMilestone = (misses ~/ 3) * 3;
     if (missMilestone >= 3) {
       return ProNudgeMoment(
         key: 'miss:$missMilestone',
-        title: 'Your last $missMilestone misses left a clue.',
+        title: '$missMilestone misses left a clue.',
         body:
-            'Add active blocking and more commitment windows with Pro. Your evidence and app activity still stay on this phone.',
+            'Often the time or the place is the problem. Pro adds gym check-ins and a different time each day.',
       );
     }
     return null;

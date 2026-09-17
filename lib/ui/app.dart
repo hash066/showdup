@@ -1,31 +1,39 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../core/theme.dart';
+
+import '../core/features.dart';
+import '../design/chrome.dart';
+import '../design/icons.dart';
+import '../design/layout.dart';
+import '../design/theme.dart';
+import '../design/tokens.dart';
+import '../design/type.dart';
+import '../platform/alarm_channel.dart';
+import '../platform/blocker_channel.dart';
+import '../platform/overlay_channel.dart';
 import '../services/billing.dart';
 import '../services/controller.dart';
 import '../services/pro_nudge_policy.dart';
 import '../services/repository.dart';
-import '../platform/alarm_channel.dart';
-import '../platform/blocker_channel.dart';
-import '../platform/overlay_channel.dart';
 import '../services/social_service.dart';
-import 'widgets.dart';
-import 'screens.dart';
+import 'app_provider.dart';
 import 'battle_screen.dart';
-import 'coach_marks.dart';
 import 'keys.dart';
+import 'onboarding.dart';
+import 'screens.dart';
 
-final appProvider = ChangeNotifierProvider<AppController>(
-  (ref) => throw StateError('App session not initialized'),
-);
+export 'app_provider.dart';
+export 'onboarding.dart' show WelcomeScreen;
 
 class AppEntry extends StatefulWidget {
   const AppEntry({super.key, required this.prefs, this.startupError});
   final SharedPreferences prefs;
   final String? startupError;
+
   @override
   State<AppEntry> createState() => _AppEntryState();
 }
@@ -35,6 +43,7 @@ class _AppEntryState extends State<AppEntry> {
   bool entering = false;
   bool billingListenersAttached = false;
   String? error;
+
   @override
   void initState() {
     super.initState();
@@ -95,6 +104,7 @@ class _AppEntryState extends State<AppEntry> {
       await BlockerChannel.setEntitlement(
         enabled: Billing.isPro,
         expiresAtEpochMs: Billing.proExpiresAtEpochMs.value,
+        freeCatch: Features.catchEnabled,
       );
     } on MissingPluginException {
       // Non-Android tests and previews do not provide the blocker channel.
@@ -144,116 +154,9 @@ class _AppEntryState extends State<AppEntry> {
   Widget _material(Widget home) => MaterialApp(
     title: 'ShowdUp',
     debugShowCheckedModeBanner: false,
-    theme: buildTheme(),
+    theme: buildShowdTheme(),
+    themeMode: ThemeMode.dark,
     home: home,
-  );
-}
-
-class WelcomeScreen extends StatelessWidget {
-  const WelcomeScreen({
-    super.key,
-    required this.onPreview,
-    required this.onAuthenticated,
-    this.error,
-  });
-  final VoidCallback onPreview;
-  final Future<void> Function() onAuthenticated;
-  final String? error;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Brand(),
-                const SizedBox(height: 36),
-                const Eyebrow(
-                  'Less negotiating. More living.',
-                  color: T.accent,
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'An alarm you\nhave to earn.',
-                  style: TextStyle(
-                    fontSize: 46,
-                    fontWeight: FontWeight.w800,
-                    height: 1.08,
-                    letterSpacing: -2.4,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'Set a normal alarm, or attach proof. ShowdUp keeps returning until your walk, workout, arrival, focus session or LeetCode result is verified.',
-                  style: TextStyle(color: T.muted, fontSize: 16, height: 1.6),
-                ),
-                const SizedBox(height: 28),
-                const Panel(
-                  color: T.surfaceRaised,
-                  padding: 20,
-                  child: Row(
-                    children: [
-                      Text('🦊', style: TextStyle(fontSize: 38)),
-                      SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Eyebrow('Tomorrow · 7:00 AM', color: T.accent),
-                            SizedBox(height: 7),
-                            Text(
-                              'Morning walk · 20 min',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Snooze is allowed. Proof is required.',
-                              style: TextStyle(color: T.muted, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.arrow_forward_rounded, color: T.accent),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 28),
-                if (error != null) ErrorNotice(error!),
-                FilledButton(
-                  onPressed: onAuthenticated,
-                  child: const Text(
-                    'Choose my alarm  →',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Center(
-                  child: TextButton(
-                    key: ShowdKeys.previewEntry,
-                    onPressed: onPreview,
-                    child: const Text('Explore the app · local preview'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Center(
-                  child: Text(
-                    'Snooze buys time. Only evidence completes it.',
-                    style: TextStyle(color: T.muted, fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    ),
   );
 }
 
@@ -261,6 +164,7 @@ class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key, required this.onLogout, required this.prefs});
   final Future<void> Function() onLogout;
   final SharedPreferences prefs;
+
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
 }
@@ -269,11 +173,10 @@ class _HomeShellState extends ConsumerState<HomeShell>
     with WidgetsBindingObserver {
   int tab = 0;
   bool _checkingLaunchAttempt = false;
-  bool _promptingProMoment = false;
   String? _openingAttemptId;
-  final _alarmTutorialKey = GlobalKey();
-  final _proTutorialKey = GlobalKey();
-  final _progressTutorialKey = GlobalKey();
+  ProNudgeMoment? _nudge;
+
+  static const _firstAlarmOffered = 'onboarding.firstAlarmOffered.v1';
 
   @override
   void initState() {
@@ -284,40 +187,9 @@ class _HomeShellState extends ConsumerState<HomeShell>
       unawaited(_consumeInviteLink());
       unawaited(_enablePendingOverlay());
       unawaited(_maybePromptGoogle());
-      unawaited(_maybePromptProMilestone());
-      unawaited(_showHomeTutorial());
+      unawaited(_maybeShowProMoment());
+      unawaited(_offerFirstAlarm());
     });
-  }
-
-  Future<void> _showHomeTutorial({bool force = false}) async {
-    const key = 'tutorial.home.v1';
-    if (ref.read(appProvider).preview && !force) return;
-    if (!force && widget.prefs.getBool(key) == true) return;
-    if (!mounted) return;
-    setState(() => tab = 0);
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    if (!mounted) return;
-    await showCoachMarks(context, [
-      CoachMarkStep(
-        target: _alarmTutorialKey,
-        title: 'Choose the kind of alarm',
-        body:
-            'Regular hands off to Android Clock. Commitment alarms keep returning until trusted evidence reaches the finish line.',
-      ),
-      CoachMarkStep(
-        target: _progressTutorialKey,
-        title: 'Proof lives here',
-        body:
-            'See today’s commitment, verification progress and the next alarm window. No manual Done button can bypass it.',
-      ),
-      CoachMarkStep(
-        target: _proTutorialKey,
-        title: 'Pro adds enforcement',
-        body:
-            'Verification stays useful for free. Pro adds active app blocking, more commitments and advanced schedules.',
-      ),
-    ]);
-    await widget.prefs.setBool(key, true);
   }
 
   @override
@@ -334,17 +206,58 @@ class _HomeShellState extends ConsumerState<HomeShell>
       unawaited(_consumeInviteLink());
       unawaited(_enablePendingOverlay());
       unawaited(_maybePromptGoogle());
-      unawaited(_maybePromptProMilestone());
+      unawaited(_maybeShowProMoment());
     }
   }
 
-  Future<void> _maybePromptProMilestone() async {
-    if (_promptingProMoment || !mounted) return;
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    if (!mounted) return;
+  bool get _battleTab => SocialService.instance.available;
+
+  List<ShowdNavItem> get _tabs => [
+    const ShowdNavItem(
+      key: ShowdKeys.navAlarms,
+      icon: ShowdIcons.alarm,
+      label: 'Alarms',
+    ),
+    const ShowdNavItem(
+      key: ShowdKeys.navCommitments,
+      icon: ShowdIcons.calendar,
+      label: 'Commitments',
+    ),
+    const ShowdNavItem(
+      key: ShowdKeys.navHistory,
+      icon: ShowdIcons.history,
+      label: 'History',
+    ),
+    if (_battleTab)
+      const ShowdNavItem(
+        key: ShowdKeys.navBattle,
+        icon: ShowdIcons.battle,
+        label: 'Battle',
+      ),
+  ];
+
+  /// Straight into setup the first time someone arrives with no alarm.
+  Future<void> _offerFirstAlarm() async {
+    final app = ref.read(appProvider);
+    if (app.preview || widget.prefs.getBool(_firstAlarmOffered) == true) {
+      return;
+    }
+    await widget.prefs.setBool(_firstAlarmOffered, true);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (!mounted || ref.read(appProvider).commitments.isNotEmpty) return;
+    openWizard(context);
+  }
+
+  /// Upgrade moments show as a quiet card on Alarms, at most every 48 hours.
+  Future<void> _maybeShowProMoment() async {
+    if (!mounted || _nudge != null) return;
     final app = ref.read(appProvider);
     if (app.preview || app.loading || app.user?.isPro == true) return;
-    final moment = ProNudgePolicy.next(app.attempts, isPro: false);
+    final moment = ProNudgePolicy.next(
+      app.attempts,
+      isPro: false,
+      reaches: app.attempts.fold(0, (sum, a) => sum + app.reachesFor(a.id)),
+    );
     if (moment == null ||
         widget.prefs.getBool('pro.nudge.${moment.key}') == true) {
       return;
@@ -352,40 +265,9 @@ class _HomeShellState extends ConsumerState<HomeShell>
     final now = DateTime.now().millisecondsSinceEpoch;
     final last = widget.prefs.getInt('pro.nudge.lastShownAt') ?? 0;
     if (now - last < const Duration(hours: 48).inMilliseconds) return;
-
-    _promptingProMoment = true;
     await widget.prefs.setBool('pro.nudge.${moment.key}', true);
     await widget.prefs.setInt('pro.nudge.lastShownAt', now);
-    if (!mounted) return;
-    final openPro = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Text('🦊', style: TextStyle(fontSize: 42)),
-        title: Text(moment.title, textAlign: TextAlign.center),
-        content: Text(
-          moment.body,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: T.muted, height: 1.55),
-        ),
-        actions: [
-          OutlinedButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Not now'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('See ShowdUp Pro'),
-          ),
-        ],
-      ),
-    );
-    _promptingProMoment = false;
-    if (openPro == true && mounted) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute<void>(builder: (_) => const ProScreen()),
-      );
-    }
+    if (mounted) setState(() => _nudge = moment);
   }
 
   Future<void> _maybePromptGoogle() async {
@@ -406,18 +288,18 @@ class _HomeShellState extends ConsumerState<HomeShell>
     final accepted = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Keep your battle identity?'),
+        title: const Text('Keep your battle name?'),
         content: const Text(
-          'Connect Google to invite friends and keep your weekly rank. Solo commitments stay on this phone.',
+          'Connect Google to invite friends and keep your weekly rank. Your alarms stay on this phone.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Not now'),
           ),
-          FilledButton(
+          TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Continue with Google'),
+            child: const Text('Connect Google'),
           ),
         ],
       ),
@@ -491,7 +373,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
       final code = await const MethodChannel(
         'app.showdup/social',
       ).invokeMethod<String>('getLaunchInvite');
-      if (code != null && code.length == 6 && mounted) {
+      if (code != null && code.length == 6 && mounted && _battleTab) {
         SocialService.instance.pendingInviteCode = code.toUpperCase();
         setState(() => tab = 3);
       }
@@ -514,11 +396,31 @@ class _HomeShellState extends ConsumerState<HomeShell>
     } on MissingPluginException catch (_) {}
   }
 
+  void _openSettings() => Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (settingsContext) => SettingsScreen(
+        onLogout: widget.onLogout,
+        onWhyThisWorks: () => Navigator.push(
+          settingsContext,
+          MaterialPageRoute<void>(
+            builder: (whyContext) => WhyThisWorksScreen(
+              onContinue: () async => Navigator.pop(whyContext),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
+    final tabs = _tabs;
+    final index = tab.clamp(0, tabs.length - 1);
     return Scaffold(
       body: SafeArea(
+        bottom: false,
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 640),
@@ -528,36 +430,49 @@ class _HomeShellState extends ConsumerState<HomeShell>
                   Container(
                     key: ShowdKeys.previewBanner,
                     width: double.infinity,
-                    color: T.accent.withValues(alpha: .12),
+                    color: ShowdColors.carbon,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
+                      horizontal: ShowdSpace.gutter,
                       vertical: 8,
                     ),
-                    child: const Text(
-                      'LOCAL PREVIEW  ·  Sample data, no live verification',
+                    child: Text(
+                      'Preview · sample data',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: T.accent,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: .6,
+                      style: ShowdType.caption.copyWith(
+                        color: ShowdColors.accent,
                       ),
                     ),
                   ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    ShowdSpace.gutter,
+                    ShowdSpace.s2,
+                    4,
+                    0,
+                  ),
+                  child: ScreenHeader(
+                    leading: const Wordmark(size: 22),
+                    trailing: ShowdIconButton(
+                      key: ShowdKeys.navSettings,
+                      icon: ShowdIcons.settings,
+                      semanticLabel: 'Settings',
+                      onPressed: _openSettings,
+                    ),
+                  ),
+                ),
                 Expanded(
-                  child: switch (tab) {
-                    0 => TodayScreen(
-                      alarmTutorialKey: _alarmTutorialKey,
-                      proTutorialKey: _proTutorialKey,
-                      progressTutorialKey: _progressTutorialKey,
+                  child: switch (tabs[index].key) {
+                    ShowdKeys.navAlarms => AlarmsScreen(
+                      nudge: _nudge,
+                      onNudgeDismiss: () => setState(() => _nudge = null),
+                      onNudgeOpen: () {
+                        setState(() => _nudge = null);
+                        openPro(context);
+                      },
                     ),
-                    1 => const CommitmentsScreen(),
-                    2 => const HistoryScreen(),
-                    3 => const BattleScreen(),
-                    _ => SettingsScreen(
-                      onLogout: widget.onLogout,
-                      onReplayTutorial: () => _showHomeTutorial(force: true),
-                    ),
+                    ShowdKeys.navCommitments => const CommitmentsScreen(),
+                    ShowdKeys.navHistory => const HistoryScreen(),
+                    _ => const BattleScreen(),
                   },
                 ),
               ],
@@ -565,39 +480,10 @@ class _HomeShellState extends ConsumerState<HomeShell>
           ),
         ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (v) => setState(() => tab = v),
-        destinations: const [
-          NavigationDestination(
-            key: ShowdKeys.navAlarms,
-            icon: Icon(Icons.alarm_outlined),
-            selectedIcon: Icon(Icons.alarm_rounded),
-            label: 'Alarms',
-          ),
-          NavigationDestination(
-            key: ShowdKeys.navCommitments,
-            icon: Icon(Icons.flag_outlined),
-            selectedIcon: Icon(Icons.flag_rounded),
-            label: 'Commitments',
-          ),
-          NavigationDestination(
-            key: ShowdKeys.navHistory,
-            icon: Icon(Icons.bar_chart_rounded),
-            label: 'History',
-          ),
-          NavigationDestination(
-            key: ShowdKeys.navBattle,
-            icon: Icon(Icons.emoji_events_outlined),
-            selectedIcon: Icon(Icons.emoji_events_rounded),
-            label: 'Battle',
-          ),
-          NavigationDestination(
-            key: ShowdKeys.navSettings,
-            icon: Icon(Icons.tune_rounded),
-            label: 'Settings',
-          ),
-        ],
+      bottomNavigationBar: ShowdNavBar(
+        items: tabs,
+        index: index,
+        onSelect: (value) => setState(() => tab = value),
       ),
     );
   }

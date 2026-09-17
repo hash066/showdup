@@ -1,0 +1,155 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/features.dart';
+import '../../design/buttons.dart';
+import '../../design/icons.dart';
+import '../../design/layout.dart';
+import '../../design/mark.dart';
+import '../../design/tokens.dart';
+import '../../design/type.dart';
+import '../../services/billing.dart';
+import '../../services/controller.dart';
+import '../app_provider.dart';
+import 'common.dart';
+
+/// Plan page shown when the store paywall is unavailable.
+class ProScreen extends ConsumerStatefulWidget {
+  const ProScreen({super.key, this.initialMessage});
+  final String? initialMessage;
+
+  @override
+  ConsumerState<ProScreen> createState() => _ProScreenState();
+}
+
+class _ProScreenState extends ConsumerState<ProScreen> {
+  bool busy = false;
+  late String? message = widget.initialMessage;
+
+  Future<void> run(Future<BillingResult> Function() action) async {
+    setState(() => busy = true);
+    try {
+      final result = await action();
+      if (!mounted) return;
+      setState(
+        () => message = switch (result) {
+          BillingResult.purchased => 'Pro is on. Thank you.',
+          BillingResult.restored when Billing.isPro => 'Pro is back on.',
+          BillingResult.restored =>
+            'No Pro purchase found on this Google Play account.',
+          BillingResult.cancelled => 'Nothing changed.',
+        },
+      );
+    } catch (e) {
+      if (mounted) setState(() => message = friendlyError(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isPro = ref.watch(appProvider).user?.isPro == true;
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            const PushedHeader(close: true),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  ShowdSpace.gutter,
+                  ShowdSpace.s2,
+                  ShowdSpace.gutter,
+                  ShowdSpace.s6,
+                ),
+                children: [
+                  const ShowdMark(state: MarkState.showedUp, size: 56),
+                  const SizedBox(height: ShowdSpace.s6),
+                  Text('More room\nto show up.', style: ShowdType.hero),
+                  const SizedBox(height: ShowdSpace.s3),
+                  Text(
+                    '₹79 a month, or ₹399 a year with 7 days free.',
+                    style: ShowdType.bodyL,
+                  ),
+                  const SizedBox(height: ShowdSpace.s1),
+                  Text(
+                    'Google Play shows the final price before you pay.',
+                    style: ShowdType.caption,
+                  ),
+                  const SizedBox(height: ShowdSpace.s6),
+                  for (final (title, body) in [
+                    ('Up to 20 proof alarms', 'Free keeps one on at a time.'),
+                    (
+                      'Gym, places and GPS walks',
+                      'Checks you in when you arrive.',
+                    ),
+                    if (Features.catchEnabled)
+                      ('Catch more than one app', 'Free catches one.')
+                    else
+                      (
+                        'Hold your distracting apps',
+                        'They stay covered until proof.',
+                      ),
+                    ('A different time each day', 'Mondays can start later.'),
+                    (
+                      'Two years of history',
+                      'With patterns and a buddy check-in.',
+                    ),
+                    (
+                      'Animal companions',
+                      'Fox, cat, pup, penguin and capybara.',
+                    ),
+                    ('Bigger battles', 'Up to 10 people.'),
+                  ])
+                    ShowdRow(
+                      leading: const ShowdIcon(
+                        ShowdIcons.check,
+                        color: ShowdColors.accent,
+                      ),
+                      title: title,
+                      subtitle: body,
+                    ),
+                  const SizedBox(height: ShowdSpace.s4),
+                  Text(
+                    'Proof, snooze and ending today stay free.',
+                    style: ShowdType.bodyM,
+                  ),
+                  const SizedBox(height: ShowdSpace.s4),
+                  if (message != null) ShowdNotice(message!),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                ShowdSpace.gutter,
+                0,
+                ShowdSpace.gutter,
+                ShowdSpace.s3,
+              ),
+              child: Column(
+                children: [
+                  ShowdButton(
+                    label: isPro ? 'You have Pro' : 'See plans',
+                    busy: busy,
+                    onPressed: isPro ? null : () => run(Billing.paywall),
+                  ),
+                  ShowdButton(
+                    label: 'Restore purchases',
+                    tone: ShowdButtonTone.quiet,
+                    onPressed: busy ? null : () => run(Billing.restore),
+                  ),
+                  Text(
+                    'Renews until you cancel in Google Play. Uninstalling doesn’t cancel it.',
+                    textAlign: TextAlign.center,
+                    style: ShowdType.caption,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -33,6 +33,10 @@ class OverlayChannel {
 
   static Future<void> disable() => _channel.invokeMethod<void>('disable');
 
-  static Future<void> sync(PetSnapshot snapshot) =>
-      _channel.invokeMethod<void>('syncSnapshot', snapshot.toJson());
+  /// [companionImage] is a PNG path the bubble draws instead of an emoji.
+  static Future<void> sync(PetSnapshot snapshot, {String? companionImage}) =>
+      _channel.invokeMethod<void>('syncSnapshot', {
+        ...snapshot.toJson(),
+        'companionImage': ?companionImage,
+      });
 }

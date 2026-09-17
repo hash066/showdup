@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ splash: the ringing bell flips into a person. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="240dp"
+            android:height="240dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+            <group
+                android:scaleX="0.75"
+                android:scaleY="0.75"
+                android:translateX="18"
+                android:translateY="18">
+                <group
+                    android:name="flip"
+                    android:pivotX="48"
+                    android:pivotY="51"
+                    android:rotation="180">
+                    <path
+                        android:pathData="M28,46V56a20,20 0,0 0,40 0V46"
+                        android:strokeWidth="11"
+                        android:strokeColor="@color/paper"
+                        android:strokeLineCap="round" />
+                    <path
+                        android:fillColor="@color/brand_accent"
+                        android:pathData="M38,26a10,10 0,1 0,20 0a10,10 0,1 0,-20 0Z" />
+                </group>
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="flip">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="450"
+                android:interpolator="@android:interpolator/overshoot"
+                android:propertyName="rotation"
+                android:startOffset="150"
+                android:valueFrom="180"
+                android:valueTo="360" />
+        </aapt:attr>
+    </target>
+</animated-vector>

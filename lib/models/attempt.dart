@@ -31,6 +31,10 @@ class Attempt {
   final Map<String, dynamic>? evidence;
   final EndedReason? endedReason;
 
+  /// A rest day covers this attempt. It is scored like "couldn't tell": no
+  /// points, and it never breaks a streak.
+  bool get restCovered => evidence?['rest'] is String;
+
   bool get isWindowOpen {
     final now = DateTime.now();
     return now.isAfter(windowStartAt) && now.isBefore(windowEndAt);

@@ -2,6 +2,7 @@ package com.rayyanshaikh.orbit
 
 import android.app.*
 import android.content.*
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -99,15 +100,16 @@ class OverlayService : Service() {
    )
    val n = NotificationCompat.Builder(c, CHANNEL)
     .setSmallIcon(R.drawable.ic_notification)
-    .setContentTitle("Bring your ShowdUp pet back")
-    .setContentText("Tap to restore the accountability overlay after restart.")
+    .setColor(Brand.accent)
+    .setContentTitle("Bring your companion back")
+    .setContentText("Tap to show the bubble again after the restart.")
     .setContentIntent(launch).setAutoCancel(true).build()
    c.getSystemService(NotificationManager::class.java).notify(ID + 1, n)
   }
   private fun ensureChannel(c: Context) {
    c.getSystemService(NotificationManager::class.java).createNotificationChannel(
-    NotificationChannel(CHANNEL, "ShowdUp pet overlay", NotificationManager.IMPORTANCE_LOW).apply {
-     description = "Keeps your optional accountability pet available over other apps"
+    NotificationChannel(CHANNEL, "Companion bubble", NotificationManager.IMPORTANCE_LOW).apply {
+     description = "Keeps your companion and next alarm over other apps while the bubble is on"
      setSound(null, null)
     }
    )
@@ -152,8 +154,9 @@ class OverlayService : Service() {
   )
   val notification = NotificationCompat.Builder(this, CHANNEL)
    .setSmallIcon(R.drawable.ic_notification)
-   .setContentTitle("ShowdUp pet is watching")
-   .setContentText("Tap to open ShowdUp. You can turn the overlay off anytime.")
+   .setColor(Brand.accent)
+   .setContentTitle("Companion bubble is on")
+   .setContentText("Tap to open ShowdUp. Turn the bubble off any time.")
    .setContentIntent(open).setOngoing(true)
    .addAction(0, "Turn off", stop).build()
   startForeground(ID, notification)
@@ -164,12 +167,20 @@ class OverlayService : Service() {
   setColor(color); cornerRadius = dp(radius).toFloat()
   if (stroke != null) setStroke(dp(1), stroke)
  }
- private fun text(value: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false) =
+ private fun text(value: String, size: Float, color: Int = Brand.paper, bold: Boolean = false) =
   TextView(this).apply {
    this.text = value; textSize = size; setTextColor(color)
    gravity = Gravity.CENTER_VERTICAL
-   if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+   typeface = if (bold) Brand.bold(this@OverlayService) else Brand.medium(this@OverlayService)
   }
+
+ /** The companion drawn by Flutter, or the mark when the image is missing. */
+ private fun companion(j: JSONObject, size: Int): View {
+  val path = j.optString("companionImage")
+  val bitmap = if (path.isNotBlank()) try { BitmapFactory.decodeFile(path) } catch (_: Exception) { null } else null
+  if (bitmap != null) return ImageView(this).apply { setImageBitmap(bitmap); contentDescription = "Companion" }
+  return MarkView(this, ringing = j.optString("activeAttemptId").isNotBlank()).apply { setPadding(dp(size / 8), dp(size / 8), dp(size / 8), dp(size / 8)) }
+ }
 
  internal fun render() {
   if (!canDraw(this)) { stopSelf(); return }
@@ -178,15 +189,6 @@ class OverlayService : Service() {
   root = if (expanded) expandedView(snapshot) else pillView(snapshot)
   val p = params(expanded)
   try { wm.addView(root, p) } catch (_: Exception) { root = null; stopSelf() }
-  val burst = snapshot.optInt("burstCount", 0)
-  val animated = prefs(this).getInt("lastAnimatedBurst", 0)
-  if (!expanded && burst > animated) {
-   prefs(this).edit().putInt("lastAnimatedBurst", burst).apply()
-   root?.animate()?.rotationBy(540f)?.scaleX(2.4f)?.scaleY(2.4f)?.alpha(0f)?.setDuration(700)?.withEndAction {
-    root?.alpha = 1f; root?.rotation = 0f; root?.scaleX = 1f; root?.scaleY = 1f; render()
-   }?.start()
-   Toast.makeText(this, "Your pet cracked. Weekly score -100.", Toast.LENGTH_LONG).show()
-  }
  }
 
  private fun params(full: Boolean) = WindowManager.LayoutParams(
@@ -204,23 +206,17 @@ class OverlayService : Service() {
  }
 
  private fun pillView(j: JSONObject): View {
+  val active = j.optString("activeAttemptId").isNotBlank()
   val row = LinearLayout(this).apply {
    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-   setPadding(dp(12), dp(7), dp(12), dp(7))
-   val mood = j.optString("mood", "happy")
-   val colors = when (mood) {
-    "uneasy" -> Color.rgb(108, 73, 17) to Color.rgb(255, 198, 87)
-    "sad" -> Color.rgb(33, 48, 82) to Color.rgb(121, 161, 255)
-    "cracked" -> Color.rgb(91, 31, 36) to Color.rgb(255, 126, 135)
-    else -> Color.rgb(20, 70, 44) to Color.rgb(103, 232, 165)
-   }
-   background = round(colors.first, 28, colors.second)
+   setPadding(dp(6), dp(6), dp(14), dp(6))
+   background = round(Brand.carbon, 28, if (active) Brand.accent else Brand.graphiteStrong)
    elevation = dp(8).toFloat()
+   contentDescription = if (active) "ShowdUp: an alarm is open" else "ShowdUp companion"
   }
-  row.addView(text(j.optString("mascotGlyph", "🦊"), 27f), LinearLayout.LayoutParams(dp(40), dp(40)))
-  row.addView(text(j.optInt("weeklyScore", 0).toString(), 22f, Color.rgb(220, 255, 229), true).apply { setPadding(dp(5), 0, dp(9), 0) })
-  val friends = j.optJSONArray("friendGlyphs") ?: JSONArray()
-  for (i in 0 until min(3, friends.length())) row.addView(text(friends.optString(i, "•"), 16f), LinearLayout.LayoutParams(dp(25), dp(30)))
+  row.addView(companion(j, 40), LinearLayout.LayoutParams(dp(40), dp(40)))
+  val label = if (active) "Open now" else "${j.optInt("weeklyScore", 0)}"
+  row.addView(text(label, if (active) 15f else 20f, if (active) Brand.accent else Brand.paper, true).apply { setPadding(dp(8), 0, 0, 0) })
   row.setOnTouchListener { view, event ->
    val lp = view.layoutParams as? WindowManager.LayoutParams ?: return@setOnTouchListener false
    when (event.actionMasked) {
@@ -249,37 +245,57 @@ class OverlayService : Service() {
  }
 
  private fun expandedView(j: JSONObject): View {
-  val scrim = FrameLayout(this).apply { setBackgroundColor(0xB8000000.toInt()); isClickable = true }
+  val scrim = FrameLayout(this).apply { setBackgroundColor(0xB80E0E0C.toInt()); isClickable = true }
   scrim.setOnClickListener { expanded = false; render() }
   val card = LinearLayout(this).apply {
-   orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(20), dp(22), dp(20))
-   background = round(Color.rgb(20, 23, 20), 28, Color.rgb(62, 77, 65)); isClickable = true
+   orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(12), dp(10))
+   background = round(Brand.carbon, 28, Brand.graphite); isClickable = true
   }
-  val title = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-  title.addView(text(j.optString("mascotGlyph", "🦊"), 38f), LinearLayout.LayoutParams(dp(56), dp(56)))
-  title.addView(LinearLayout(this).apply {
-   orientation = LinearLayout.VERTICAL
-   addView(text(j.optString("mood", "happy").replaceFirstChar { it.uppercase() } + " pet", 12f, Color.rgb(148, 166, 153)))
-   addView(text("${j.optInt("weeklyScore", 0)} points", 24f, Color.WHITE, true))
+  val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+  header.addView(companion(j, 56), LinearLayout.LayoutParams(dp(56), dp(56)))
+  header.addView(LinearLayout(this).apply {
+   orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0)
+   addView(text("${j.optInt("weeklyScore", 0)} points", 22f, Brand.paper, true))
+   addView(text("this week · ${j.optInt("streak", 0)} day streak", 13f, Brand.stone))
   }, LinearLayout.LayoutParams(0, WindowManager.LayoutParams.WRAP_CONTENT, 1f))
-  title.addView(text("✕", 22f).apply { setPadding(dp(12), 0, 0, 0); setOnClickListener { expanded = false; render() } })
-  card.addView(title)
-  card.addView(text(j.optString("activeTitle", "No active commitment"), 17f, Color.WHITE, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-  val next = j.optLong("nextAlarmEpochMs", 0L)
-  val sub = "Today ${j.optInt("todayCompleted", 0)}/${j.optInt("todayTotal", 0)}  •  ${j.optInt("streak", 0)} day streak" + if (next > 0) "  •  alarm scheduled" else ""
-  card.addView(text(sub, 12f, Color.rgb(165, 182, 169)))
-  card.addView(text("Weekly battle", 13f, Color.rgb(103, 232, 165), true).apply { setPadding(0, dp(18), 0, dp(8)) })
+  header.addView(text("✕", 20f, Brand.stone).apply {
+   gravity = Gravity.CENTER; contentDescription = "Close"
+   setOnClickListener { expanded = false; render() }
+  }, LinearLayout.LayoutParams(dp(48), dp(48)))
+  card.addView(header)
+
+  val activeTitle = j.optString("activeTitle")
+  card.addView(text(if (activeTitle.isNotBlank()) activeTitle else "Nothing open right now", 18f, Brand.paper, true).apply { setPadding(0, dp(16), dp(8), dp(2)) })
+  card.addView(text("Today ${j.optInt("todayCompleted", 0)} of ${j.optInt("todayTotal", 0)}", 13f, Brand.stone))
+
   val ranks = j.optJSONArray("topRanks") ?: JSONArray()
-  if (ranks.length() == 0) card.addView(text("Invite a friend to activate your battle.", 13f, Color.rgb(165, 182, 169)))
-  for (i in 0 until min(5, ranks.length())) {
-   val rank = ranks.optJSONObject(i) ?: continue
-   card.addView(text("${rank.optInt("rank", i + 1)}   ${rank.optString("name", "Player")}                         ${rank.optInt("score", 0)}", 13f).apply { setPadding(0, dp(9), 0, dp(9)) })
+  if (ranks.length() > 0) {
+   card.addView(text("This week's battle", 13f, Brand.stone).apply { setPadding(0, dp(16), 0, dp(4)) })
+   for (i in 0 until min(5, ranks.length())) {
+    val rank = ranks.optJSONObject(i) ?: continue
+    card.addView(LinearLayout(this).apply {
+     orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), dp(8), dp(6))
+     addView(text("${rank.optInt("rank", i + 1)}", 15f, if (i == 0) Brand.accent else Brand.stone, true), LinearLayout.LayoutParams(dp(28), WindowManager.LayoutParams.WRAP_CONTENT))
+     addView(text(rank.optString("name", "Player"), 15f), LinearLayout.LayoutParams(0, WindowManager.LayoutParams.WRAP_CONTENT, 1f))
+     addView(text("${rank.optInt("score", 0)}", 15f, Brand.paper, true))
+    })
+   }
   }
-  val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END; setPadding(0, dp(18), 0, 0) }
-  val open = text("OPEN SHOWDUP", 12f, Color.rgb(103, 232, 165), true).apply { setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener { startActivity(Intent(this@OverlayService, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); expanded = false; render() } }
-  actions.addView(open)
-  if (j.optString("activeAttemptId").isNotBlank()) actions.addView(text("SNOOZE", 12f, Color.WHITE, true).apply { setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener { AlarmEngine.silence(this@OverlayService, j.optString("activeAttemptId"), true, "manual") } })
-  actions.addView(text("TURN OFF", 12f, Color.rgb(255, 151, 151), true).apply { setPadding(dp(12), dp(10), 0, dp(10)); setOnClickListener { disable(this@OverlayService) } })
+
+  val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END; setPadding(0, dp(12), 0, 0) }
+  fun action(label: String, color: Int, onClick: () -> Unit) = text(label, 15f, color, true).apply {
+   gravity = Gravity.CENTER; minHeight = dp(48); setPadding(dp(12), 0, dp(12), 0); setOnClickListener { onClick() }
+  }
+  actions.addView(action("Turn off", Brand.stone) { disable(this@OverlayService) })
+  if (j.optString("activeAttemptId").isNotBlank()) {
+   actions.addView(action("Snooze", Brand.paper) { AlarmEngine.silence(this@OverlayService, j.optString("activeAttemptId"), true, "manual") })
+  }
+  actions.addView(action("Open ShowdUp", Brand.accent) {
+   startActivity(Intent(this@OverlayService, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+    j.optString("activeAttemptId").takeIf { it.isNotBlank() }?.let { putExtra("attemptId", it) }
+   })
+   expanded = false; render()
+  })
   card.addView(actions)
   val cardParams = FrameLayout.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(20), dp(48), dp(20), dp(48)) }
   scrim.addView(card, cardParams)

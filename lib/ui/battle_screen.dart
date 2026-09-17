@@ -1,19 +1,26 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
-import '../core/theme.dart';
+
+import '../design/buttons.dart';
+import '../design/companion.dart';
+import '../design/icons.dart';
+import '../design/layout.dart';
+import '../design/tokens.dart';
+import '../design/type.dart';
 import '../models/battle.dart';
 import '../models/pet.dart';
-import '../platform/overlay_channel.dart';
 import '../services/controller.dart';
 import '../services/social_service.dart';
-import 'app.dart';
-import 'screens.dart';
-import 'widgets.dart';
+import 'app_provider.dart';
+import 'screens/settings.dart';
 
+/// Private weekly scoreboard with friends.
 class BattleScreen extends ConsumerStatefulWidget {
   const BattleScreen({super.key});
+
   @override
   ConsumerState<BattleScreen> createState() => _BattleScreenState();
 }
@@ -39,11 +46,7 @@ class _BattleScreenState extends ConsumerState<BattleScreen> {
       unawaited(SocialService.instance.startWatching());
       battleSub = SocialService.instance.battleStates().listen(
         (value) {
-          if (mounted) {
-            setState(() {
-              battle = value;
-            });
-          }
+          if (mounted) setState(() => battle = value);
         },
         onError: (Object e) {
           if (mounted) setState(() => error = friendlyError(e));
@@ -86,229 +89,182 @@ class _BattleScreenState extends ConsumerState<BattleScreen> {
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final pet = app.petSnapshot;
+    final capacity = battle?.capacity ?? (app.user?.isPro == true ? 10 : 4);
     return ListView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(
+        ShowdSpace.gutter,
+        ShowdSpace.s4,
+        ShowdSpace.gutter,
+        ShowdSpace.s8,
+      ),
       children: [
-        const PageHeading('Your pet remembers.', 'Battle'),
-        Panel(
+        Row(
+          children: [
+            InkWell(
+              onTap: () => showCompanionSheet(context, app),
+              borderRadius: BorderRadius.circular(ShowdRadius.card),
+              child: CompanionView(
+                mascot: pet.mascot,
+                mood: companionMoodFor(pet.mood),
+                size: 88,
+              ),
+            ),
+            const SizedBox(width: ShowdSpace.s4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  BigNumber(
+                    '${pet.weeklyScore}',
+                    style: ShowdType.numeralL,
+                    semanticLabel: '${pet.weeklyScore} points this week',
+                  ),
+                  Text('points this week', style: ShowdType.bodyM),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: ShowdSpace.s8),
+        if (!SocialService.instance.available)
+          const ShowdNotice(
+            'Battles aren’t switched on in this build. Everything else works on this phone.',
+          )
+        else if (battle == null) ...[
+          Text('A battle starts when a friend joins.', style: ShowdType.titleL),
+          const SizedBox(height: ShowdSpace.s2),
+          Text(
+            'A private scoreboard that resets every Monday. Free: you and 3 friends. Pro: up to 10 people.',
+            style: ShowdType.bodyM,
+          ),
+          const SizedBox(height: ShowdSpace.s6),
+          ShowdButton(
+            label: 'Start a battle',
+            busy: busy,
+            onPressed: () => run(
+              () => SocialService.instance.createBattle(
+                timezone: app.user?.timezone ?? 'Asia/Kolkata',
+                mascot: pet.mascot,
+              ),
+            ),
+          ),
+          const SizedBox(height: ShowdSpace.s8),
+          TextField(
+            controller: code,
+            onChanged: (_) => setState(() {}),
+            textCapitalization: TextCapitalization.characters,
+            maxLength: 6,
+            decoration: const InputDecoration(labelText: 'Invite code'),
+          ),
+          ShowdButton(
+            label: 'Join',
+            tone: ShowdButtonTone.outline,
+            onPressed: busy || code.text.trim().length != 6
+                ? null
+                : () => run(() => SocialService.instance.join(code.text)),
+          ),
+        ] else ...[
+          Row(
+            children: [
+              Expanded(child: Text(battle!.name, style: ShowdType.titleL)),
+              Text(
+                '${battle!.memberUids.length}/$capacity',
+                style: ShowdType.label,
+              ),
+            ],
+          ),
+          Text(
+            battle!.active ? 'This week' : 'Waiting for a friend to join',
+            style: ShowdType.bodyM,
+          ),
+          const SizedBox(height: ShowdSpace.s4),
+          for (final member in scores) _ScoreRow(member: member),
+          if (scores.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: ShowdSpace.s4),
+              child: Text(
+                'Invite a friend to start the scoreboard.',
+                style: ShowdType.bodyM,
+              ),
+            ),
+          const SizedBox(height: ShowdSpace.s6),
+          ShowdButton(
+            label: 'Invite a friend',
+            icon: ShowdIcons.share,
+            busy: busy,
+            onPressed: battle!.memberUids.length >= capacity
+                ? null
+                : () => run(() async {
+                    final invite = await SocialService.instance.createInvite(
+                      battle!.id,
+                    );
+                    await SharePlus.instance.share(
+                      ShareParams(
+                        text:
+                            'Battle me on ShowdUp: ${invite.url}\nCode: ${invite.code}',
+                      ),
+                    );
+                  }),
+          ),
+          ShowdButton(
+            label: 'Leave battle',
+            tone: ShowdButtonTone.quiet,
+            onPressed: busy
+                ? null
+                : () => run(() => SocialService.instance.leave(battle!.id)),
+          ),
+        ],
+        if (error != null) ...[
+          const SizedBox(height: ShowdSpace.s4),
+          ShowdNotice(error!),
+        ],
+      ],
+    );
+  }
+}
+
+class _ScoreRow extends StatelessWidget {
+  const _ScoreRow({required this.member});
+  final BattleMemberScore member;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(vertical: ShowdSpace.s3),
+    decoration: const BoxDecoration(
+      border: Border(top: BorderSide(color: ShowdColors.graphite)),
+    ),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 44,
+          child: BigNumber(
+            '${member.rank}',
+            style: ShowdType.numeralM.copyWith(fontSize: 40),
+            color: member.rank == 1 ? ShowdColors.accent : ShowdColors.stone,
+          ),
+        ),
+        CompanionView(mascot: MascotId.fromWire(member.mascot), size: 40),
+        const SizedBox(width: ShowdSpace.s3),
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Text(
-                    pet.mascot.fallbackGlyph,
-                    style: const TextStyle(fontSize: 52),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${pet.weeklyScore} weekly points',
-                          style: const TextStyle(
-                            fontSize: 21,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        Text(
-                          '${pet.mood.name} · ${pet.streak} day streak',
-                          style: const TextStyle(color: T.muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Choose your accountability pet',
-                style: TextStyle(fontSize: 12, color: T.muted),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final mascot in MascotId.values)
-                    ChoiceChip(
-                      avatar: Text(mascot.fallbackGlyph),
-                      label: Text(mascot.label),
-                      selected: pet.mascot == mascot,
-                      onSelected: (_) => app.setMascot(mascot),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              OutlinedButton.icon(
-                onPressed: busy
-                    ? null
-                    : () => run(() async {
-                        var status = await OverlayChannel.status();
-                        if (!status.permissionGranted) {
-                          await OverlayChannel.requestPermission();
-                          return;
-                        }
-                        if (status.enabled) {
-                          await OverlayChannel.disable();
-                        } else {
-                          await OverlayChannel.enable();
-                        }
-                      }),
-                icon: const Icon(Icons.picture_in_picture_alt_outlined),
-                label: const Text('Enable or disable pet overlay'),
+              Text(member.displayName, style: ShowdType.bodyL),
+              Text(
+                member.provisional
+                    ? '${member.eligibleAttempts} of 3 alarms to rank'
+                    : '${member.eligibleAttempts} alarms this week',
+                style: ShowdType.caption,
               ),
             ],
           ),
         ),
-        const SizedBox(height: 18),
-        if (!SocialService.instance.available)
-          const Panel(
-            child: Text(
-              'Battles need the Firebase release configuration. Solo commitments and the overlay still work locally.',
-            ),
-          )
-        else if (battle == null)
-          Panel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'A battle starts only when a friend joins.',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Create a private weekly group for up to 10 people, or enter a six-character invite code.',
-                  style: TextStyle(color: T.muted, height: 1.5),
-                ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: busy
-                      ? null
-                      : () => run(() async {
-                          final timezone = app.user?.timezone ?? 'Asia/Kolkata';
-                          await SocialService.instance.createBattle(
-                            timezone: timezone,
-                            mascot: pet.mascot,
-                          );
-                        }),
-                  child: const Text('Create battle and invite a friend'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: code,
-                  onChanged: (_) => setState(() {}),
-                  textCapitalization: TextCapitalization.characters,
-                  maxLength: 6,
-                  decoration: const InputDecoration(labelText: 'Invite code'),
-                ),
-                OutlinedButton(
-                  onPressed: busy || code.text.trim().length != 6
-                      ? null
-                      : () => run(() => SocialService.instance.join(code.text)),
-                  child: const Text('Join battle'),
-                ),
-              ],
-            ),
-          )
-        else ...[
-          Panel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        battle!.name,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    Text('${battle!.memberUids.length}/10'),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  battle!.active
-                      ? 'Active this week'
-                      : 'Waiting for one friend to join',
-                  style: const TextStyle(color: T.muted),
-                ),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: busy || battle!.memberUids.length >= 10
-                      ? null
-                      : () => run(() async {
-                          final invite = await SocialService.instance
-                              .createInvite(battle!.id);
-                          await SharePlus.instance.share(
-                            ShareParams(
-                              text:
-                                  'Battle me on ShowdUp: ${invite.url}\nJoin code: ${invite.code}',
-                            ),
-                          );
-                        }),
-                  icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Invite friend'),
-                ),
-                TextButton(
-                  onPressed: busy
-                      ? null
-                      : () =>
-                            run(() => SocialService.instance.leave(battle!.id)),
-                  child: const Text('Leave battle'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Panel(
-            child: Column(
-              children: [
-                for (final member in scores)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(
-                      child: Text(
-                        MascotId.fromWire(member.mascot).fallbackGlyph,
-                      ),
-                    ),
-                    title: Text('${member.rank}. ${member.displayName}'),
-                    subtitle: Text(
-                      member.provisional
-                          ? '${member.eligibleAttempts}/3 · provisional'
-                          : member.petMood,
-                    ),
-                    trailing: Text(
-                      '${member.score}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                      ),
-                    ),
-                  ),
-                if (scores.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(14),
-                    child: Text(
-                      'Invite a friend to activate rankings.',
-                      style: TextStyle(color: T.muted),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-        if (error != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: Text(error!, style: const TextStyle(color: T.danger)),
-          ),
+        BigNumber(
+          '${member.score}',
+          style: ShowdType.numeralM.copyWith(fontSize: 40),
+          align: Alignment.centerRight,
+        ),
       ],
-    );
-  }
+    ),
+  );
 }

@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,7 @@ import 'ui/app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _registerFontLicenses();
   tz.initializeTimeZones();
   String? startupError;
   if (AppConfig.configured) {
@@ -55,6 +57,18 @@ Future<void> main() async {
       child: ShowdUpApp(prefs: prefs, startupError: startupError),
     ),
   );
+}
+
+void _registerFontLicenses() {
+  LicenseRegistry.addLicense(() async* {
+    for (final (package, file) in const [
+      ('Big Shoulders', 'OFL-BigShouldersDisplay.txt'),
+      ('Bricolage Grotesque', 'OFL-BricolageGrotesque.txt'),
+    ]) {
+      final text = await rootBundle.loadString('assets/licenses/$file');
+      yield LicenseEntryWithLineBreaks([package], text);
+    }
+  });
 }
 
 class ShowdUpApp extends StatelessWidget {

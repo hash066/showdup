@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_blocker_accessibility_description">ShowdUp holds the apps you choose until you show up for your alarm. It only sees which app comes to the front. It never reads what is on screen, what you type or your passwords.</string>
+</resources>

@@ -78,13 +78,43 @@ class BlockerChannel {
         'sessions': sessions.map((session) => session.toMap()).toList(),
       });
 
+  /// [freeCatch] lets a free person hold one app. Native code clamps free
+  /// sessions to a single app, so edited preferences cannot unlock more.
   static Future<void> setEntitlement({
     required bool enabled,
     required int? expiresAtEpochMs,
+    bool freeCatch = false,
   }) => _channel.invokeMethod<void>('setEntitlement', {
     'enabled': enabled,
     'expiresAtEpochMs': expiresAtEpochMs,
+    'freeCatch': freeCatch,
   });
+
+  /// How many times each attempt's held app was opened, keyed by attempt id.
+  static Future<Map<String, int>> reaches() async {
+    final raw = await _channel.invokeMethod<Map>('reaches') ?? const {};
+    return {
+      for (final entry in raw.entries)
+        if (entry.value is num)
+          entry.key.toString(): (entry.value as num).toInt(),
+    };
+  }
+
+  static Future<Map<String, String>> appLabels(List<String> packages) async {
+    final raw =
+        await _channel.invokeMethod<Map>('appLabels', {'packages': packages}) ??
+        const {};
+    return {
+      for (final entry in raw.entries)
+        entry.key.toString(): entry.value.toString(),
+    };
+  }
+
+  static Future<bool> openApp(String packageName) async =>
+      await _channel.invokeMethod<bool>('openApp', {
+        'packageName': packageName,
+      }) ??
+      false;
 
   static Future<void> stop() => _channel.invokeMethod<void>('stop');
 

@@ -50,7 +50,7 @@ void main() {
     expect(PetScoring.normalizedScore(attempts, penalty: 100), 400);
   });
 
-  test('three genuine misses collapse but sensor failure does not count', () {
+  test('misses never crack the companion or cost points', () {
     final attempts = [
       attempt('latest', AttemptState.expired),
       attempt('sensor', AttemptState.unverifiable, daysAgo: 1),
@@ -58,29 +58,43 @@ void main() {
       attempt('third', AttemptState.expired, daysAgo: 3),
     ];
     expect(PetScoring.consecutiveMisses(attempts), 3);
-    expect(
-      PetScoring.mood(
-        recentAttempts: attempts,
-        currentSnoozes: 0,
-        cracked: true,
-      ),
-      PetMood.cracked,
-    );
+    final mood = PetScoring.mood(recentAttempts: attempts, currentSnoozes: 0);
+    expect(mood, PetMood.sad);
+    expect(mood, isNot(PetMood.cracked));
+    expect(PetScoring.normalizedScore(attempts), 0);
   });
 
-  test('completion ends a genuine-miss run while low seven-day ratio stays sad', () {
+  test('showing up right after a miss is a comeback', () {
     final attempts = [
       attempt('latest', AttemptState.completed),
       attempt('old', AttemptState.expired, daysAgo: 1),
+      attempt('older', AttemptState.completed, daysAgo: 2),
     ];
     expect(PetScoring.consecutiveMisses(attempts), 0);
     expect(
-      PetScoring.mood(
-        recentAttempts: attempts,
-        currentSnoozes: 1,
-        cracked: false,
-      ),
-      PetMood.sad,
+      PetScoring.mood(recentAttempts: attempts, currentSnoozes: 1),
+      PetMood.recovery,
+    );
+  });
+
+  test('rest-covered misses neither score nor break a run', () {
+    final rested = Attempt(
+      id: 'rest',
+      commitmentId: 'c',
+      ownerUid: 'u',
+      date: '2026-09-12',
+      windowStartAt: DateTime(2026, 9, 12, 6),
+      windowEndAt: DateTime(2026, 9, 12, 7),
+      state: AttemptState.expired,
+      evidence: const {'rest': 'auto'},
+    );
+    expect(PetScoring.eligible(rested), isFalse);
+    expect(
+      PetScoring.normalizedScore([
+        rested,
+        attempt('done', AttemptState.completed, daysAgo: 1),
+      ]),
+      1000,
     );
   });
 }

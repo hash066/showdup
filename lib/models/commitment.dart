@@ -197,6 +197,7 @@ class Commitment {
     required this.restrictions,
     required this.status,
     this.kind = CommitmentKind.walk,
+    this.reason,
   });
 
   final String id;
@@ -210,11 +211,17 @@ class Commitment {
   final CommitmentStatus status;
   final CommitmentKind kind;
 
+  /// "Why does this matter?" in the person's own words. Stays on the phone.
+  final String? reason;
+
   String? validate() =>
       verifierConfig.validate() ??
       schedule.validate() ??
       reminder.validate() ??
-      (title.trim().isEmpty ? 'Give it a name.' : null);
+      (title.trim().isEmpty ? 'Give it a name.' : null) ??
+      ((reason?.length ?? 0) > 120
+          ? 'Keep your reason under 120 characters.'
+          : null);
 
   Map<String, dynamic> toJson() => {
     'ownerUid': ownerUid,
@@ -226,6 +233,7 @@ class Commitment {
     'restrictions': restrictions.toJson(),
     'status': status.wire,
     'kind': kind.wire,
+    if (reason?.trim().isNotEmpty == true) 'reason': reason!.trim(),
   };
 
   factory Commitment.fromJson(String id, Map<String, dynamic> j) {
@@ -250,6 +258,7 @@ class Commitment {
       ),
       status: CommitmentStatus.from(j['status'] as String),
       kind: CommitmentKind.from(j['kind'] as String?, verifier),
+      reason: j['reason'] as String?,
     );
   }
 }

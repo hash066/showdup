@@ -43,11 +43,13 @@ class AppBlockerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString() ?: return
         FocusTracker.onPackageChanged(this, packageName)
-        if (!AppBlocker.isBlocked(this, packageName)) return
+        val attemptId = AppBlocker.holdingAttempt(this, packageName) ?: return
+        AppBlocker.recordReach(this, attemptId, packageName)
 
         startActivity(Intent(this, BlockerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(BlockerActivity.EXTRA_PACKAGE, packageName)
+            putExtra(BlockerActivity.EXTRA_ATTEMPT, attemptId)
         })
     }
 
@@ -69,6 +71,8 @@ object AppBlocker {
     private const val KEY_SESSIONS = "sessions"
     private const val KEY_PRO = "pro"
     private const val KEY_PRO_EXPIRES = "pro_expires"
+    private const val KEY_FREE_CATCH = "free_catch"
+    private const val KEY_REACHES = "reaches"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -88,11 +92,18 @@ object AppBlocker {
         return sync(context, retained + mapOf("packages" to packages, "activeFromEpochMs" to activeFromEpochMs, "activeUntilEpochMs" to untilEpochMs, "commitmentId" to commitmentId, "attemptId" to attemptId))
     }
 
-    fun setEntitlement(context: Context, enabled: Boolean, expiresAtEpochMs: Long?) {
+    /** Losing Pro no longer clears holds: [CatchPolicy] clamps what stays held. */
+    fun setEntitlement(context: Context, enabled: Boolean, expiresAtEpochMs: Long?, freeCatch: Boolean = false) {
         prefs(context).edit().putBoolean(KEY_PRO, enabled)
-            .putLong(KEY_PRO_EXPIRES, expiresAtEpochMs ?: 0L).apply()
-        if (!isEntitled(context)) stop(context)
+            .putLong(KEY_PRO_EXPIRES, expiresAtEpochMs ?: 0L)
+            .putBoolean(KEY_FREE_CATCH, freeCatch).apply()
+        if (!isEntitled(context) && !freeCatch) stop(context)
     }
+
+    fun freeCatch(context: Context): Boolean = prefs(context).getBoolean(KEY_FREE_CATCH, false)
+
+    /** Whether any hold can apply for this person: Pro, or the free catch. */
+    fun canHold(context: Context): Boolean = isEntitled(context) || freeCatch(context)
 
     fun isEntitled(context: Context): Boolean {
         if (!prefs(context).getBoolean(KEY_PRO, false)) return false
@@ -131,11 +142,56 @@ object AppBlocker {
         return valid.any { it.optLong("from", 0L) <= now }
     }
 
-    fun isBlocked(context: Context, packageName: String): Boolean {
-        if (!isEntitled(context) || !isActive(context) || isSafetyExempt(context, packageName)) return false
-        return sessions(context).any { session ->
-            session.optLong("from", 0L) <= System.currentTimeMillis() && session.optLong("until") > System.currentTimeMillis() && session.optJSONArray("packages")?.let { values -> (0 until values.length()).any { values.getString(it) == packageName } } == true
+    fun isBlocked(context: Context, packageName: String): Boolean = holdingAttempt(context, packageName) != null
+
+    /** The attempt holding [packageName] right now, or null when it is free to open. */
+    fun holdingAttempt(context: Context, packageName: String): String? {
+        if (!isActive(context) || isSafetyExempt(context, packageName)) return null
+        return CatchPolicy.holdingAttempt(catchSessions(context), packageName, isEntitled(context), freeCatch(context), System.currentTimeMillis())
+    }
+
+    private fun catchSessions(context: Context): List<CatchSession> = sessions(context).map { session ->
+        val values = session.optJSONArray("packages") ?: JSONArray()
+        CatchSession(
+            attemptId = session.optString("attemptId"),
+            from = session.optLong("from", 0L),
+            until = session.optLong("until"),
+            packages = (0 until values.length()).map(values::getString),
+        )
+    }
+
+    /** Counts a reach per attempt. Entries older than a week are dropped. */
+    fun recordReach(context: Context, attemptId: String, packageName: String) {
+        val now = System.currentTimeMillis()
+        val all = try { JSONObject(prefs(context).getString(KEY_REACHES, "{}")) } catch (_: Exception) { JSONObject() }
+        val kept = JSONObject()
+        all.keys().forEach { key ->
+            val entry = all.optJSONObject(key) ?: return@forEach
+            if (now - entry.optLong("at") < 7 * 86_400_000L) kept.put(key, entry)
         }
+        val entry = kept.optJSONObject(attemptId) ?: JSONObject()
+        kept.put(attemptId, entry.put("count", entry.optInt("count") + 1).put("at", now).put("package", packageName))
+        prefs(context).edit().putString(KEY_REACHES, kept.toString()).apply()
+    }
+
+    fun reaches(context: Context): Map<String, Int> {
+        val all = try { JSONObject(prefs(context).getString(KEY_REACHES, "{}")) } catch (_: Exception) { return emptyMap() }
+        return all.keys().asSequence().associateWith { all.optJSONObject(it)?.optInt("count") ?: 0 }
+    }
+
+    fun reachesFor(context: Context, attemptId: String): Int = reaches(context)[attemptId] ?: 0
+
+    fun appLabels(context: Context, packages: List<String>): Map<String, String> = packages.mapNotNull { name ->
+        try {
+            val info = context.packageManager.getApplicationInfo(name, 0)
+            name to context.packageManager.getApplicationLabel(info).toString()
+        } catch (_: Exception) { null }
+    }.toMap()
+
+    fun openApp(context: Context, packageName: String): Boolean {
+        val launch = context.packageManager.getLaunchIntentForPackage(packageName) ?: return false
+        context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return true
     }
 
     fun status(context: Context): Map<String, Any> {
