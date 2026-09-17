@@ -101,7 +101,8 @@ void main() {
     );
   });
   test('commitment presets migrate safely and place metadata round-trips', () {
-    expect(CommitmentKind.from(null, VerifierType.steps), CommitmentKind.walk);
+    // Steps is its own preset again in 1.0.
+    expect(CommitmentKind.from(null, VerifierType.steps), CommitmentKind.steps);
     expect(
       CommitmentKind.from(null, VerifierType.location),
       CommitmentKind.gym,

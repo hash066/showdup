@@ -112,4 +112,9 @@ class AlarmChannel {
 
   static Future<bool> showNativeAlarms() async =>
       await _m.invokeMethod<bool>('showNativeAlarms') ?? false;
+
+  /// Rings one real reminder in [seconds], through the same notification
+  /// channel, full-screen intent and alarm sound as a proof alarm.
+  static Future<bool> testAlarm({int seconds = 10}) async =>
+      await _m.invokeMethod<bool>('testAlarm', {'seconds': seconds}) ?? false;
 }

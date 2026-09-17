@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/features.dart';
 import '../design/chrome.dart';
 import '../design/icons.dart';
 import '../design/layout.dart';
@@ -103,6 +104,7 @@ class _AppEntryState extends State<AppEntry> {
       await BlockerChannel.setEntitlement(
         enabled: Billing.isPro,
         expiresAtEpochMs: Billing.proExpiresAtEpochMs.value,
+        freeCatch: Features.catchEnabled,
       );
     } on MissingPluginException {
       // Non-Android tests and previews do not provide the blocker channel.
@@ -251,7 +253,11 @@ class _HomeShellState extends ConsumerState<HomeShell>
     if (!mounted || _nudge != null) return;
     final app = ref.read(appProvider);
     if (app.preview || app.loading || app.user?.isPro == true) return;
-    final moment = ProNudgePolicy.next(app.attempts, isPro: false);
+    final moment = ProNudgePolicy.next(
+      app.attempts,
+      isPro: false,
+      reaches: app.attempts.fold(0, (sum, a) => sum + app.reachesFor(a.id)),
+    );
     if (moment == null ||
         widget.prefs.getBool('pro.nudge.${moment.key}') == true) {
       return;

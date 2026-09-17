@@ -13,6 +13,7 @@ import '../../models/attempt.dart';
 import '../../models/commitment.dart';
 import '../../models/enums.dart';
 import '../../platform/alarm_channel.dart';
+import '../../core/features.dart';
 import '../../services/controller.dart';
 import '../../services/pro_nudge_policy.dart';
 import '../app_provider.dart';
@@ -76,6 +77,32 @@ class AlarmsScreen extends ConsumerWidget {
                 app.commitment(other.commitmentId)?.title ?? 'Alarm',
               ),
           ],
+          for (final commitment in active)
+            if (app.ladderOffer(commitment.id) case final offer?
+                when !offer.up &&
+                    !app.attempts.any(
+                      (x) =>
+                          x.commitmentId == commitment.id &&
+                          x.state == AttemptState.pending,
+                    )) ...[
+              const SizedBox(height: ShowdSpace.s8),
+              _Offer(
+                title: 'Two misses in a row.',
+                body:
+                    'Smaller wins count. Try ${offer.change} for ${commitment.title.toLowerCase()} for a while?',
+                action: 'Make it ${offer.change}',
+                onAction: () async {
+                  try {
+                    await app.acceptLadder(offer);
+                  } catch (e) {
+                    if (context.mounted) {
+                      showMessage(context, friendlyError(e));
+                    }
+                  }
+                },
+                onDismiss: () => app.dismissLadder(commitment.id),
+              ),
+            ],
           if (nudge != null) ...[
             const SizedBox(height: ShowdSpace.s8),
             _NudgeCard(
@@ -85,6 +112,17 @@ class AlarmsScreen extends ConsumerWidget {
             ),
           ],
           const SizedBox(height: ShowdSpace.s8),
+          if (Features.restDays && app.restBanked != null && active.isNotEmpty)
+            ShowdRow(
+              leading: const ShowdIcon(ShowdIcons.rest),
+              title: 'Rest tomorrow',
+              subtitle: app.restBanked! > 0
+                  ? 'Uses 1 of ${app.restBanked} saved. Tomorrow’s alarms stay quiet.'
+                  : 'Show up 5 times to save a rest day.',
+              onTap: app.restBanked! > 0
+                  ? () => _restTomorrow(context, app)
+                  : null,
+            ),
           ShowdRow(
             leading: const ShowdIcon(ShowdIcons.alarm),
             title: 'Regular alarm',
@@ -128,6 +166,20 @@ class AlarmsScreen extends ConsumerWidget {
         if (byRank != 0) return byRank;
         return left.windowStartAt.compareTo(right.windowStartAt);
       });
+  }
+
+  Future<void> _restTomorrow(BuildContext context, AppController app) async {
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    final date = DateFormat('yyyy-MM-dd').format(tomorrow);
+    final planned = await app.planRest(date);
+    if (context.mounted) {
+      showMessage(
+        context,
+        planned
+            ? 'Rest day set for ${DateFormat('EEEE').format(tomorrow)}. Rhythm kept.'
+            : 'No rest days saved yet.',
+      );
+    }
   }
 
   Future<void> _regularAlarm(BuildContext context) async {
@@ -190,6 +242,7 @@ class _Hero extends StatelessWidget {
             ? 'Rings today'
             : 'Rings ${DateFormat('EEEE').format(a.windowStartAt.toLocal())}',
       ),
+      _ when a.restCovered => (MarkState.rest, 'Rest day. Rhythm kept.'),
       AttemptState.completed => (MarkState.showedUp, 'Showed up today'),
       AttemptState.abandoned => (
         MarkState.missed,
@@ -291,6 +344,52 @@ class _Empty extends StatelessWidget {
       ],
     );
   }
+}
+
+class _Offer extends StatelessWidget {
+  const _Offer({
+    required this.title,
+    required this.body,
+    required this.action,
+    required this.onAction,
+    required this.onDismiss,
+  });
+
+  final String title;
+  final String body;
+  final String action;
+  final VoidCallback onAction;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+    decoration: BoxDecoration(
+      color: ShowdColors.carbon,
+      borderRadius: BorderRadius.circular(ShowdRadius.card),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: ShowdType.titleM),
+        const SizedBox(height: ShowdSpace.s1),
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Text(body, style: ShowdType.bodyM),
+        ),
+        Wrap(
+          children: [
+            TextButton(onPressed: onAction, child: Text(action)),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: ShowdColors.stone),
+              onPressed: onDismiss,
+              child: const Text('Keep it'),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class _NudgeCard extends StatelessWidget {

@@ -19,6 +19,8 @@ import '../../design/type.dart';
 import '../../models/attempt.dart';
 import '../../models/commitment.dart';
 import '../../models/enums.dart';
+import '../../models/verifier_config.dart';
+import '../../platform/blocker_channel.dart';
 import '../../services/controller.dart';
 import '../app_provider.dart';
 import '../keys.dart';
@@ -38,6 +40,57 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
   bool released = false;
   final cardKey = GlobalKey();
   String? localError;
+
+  /// Names of the apps this alarm holds, for "Open Instagram".
+  Map<String, String> appNames = const {};
+  bool loadingNames = false;
+
+  Future<void> _loadAppNames(Commitment c) async {
+    if (loadingNames || appNames.isNotEmpty) return;
+    final packages = c.restrictions.packages;
+    if (!c.restrictions.enabled || packages.isEmpty) return;
+    loadingNames = true;
+    try {
+      final names = await BlockerChannel.appLabels(packages);
+      if (mounted) setState(() => appNames = names);
+    } catch (_) {
+      // Names are a nicety; the button falls back to "Open your app".
+    }
+  }
+
+  /// Ending today can spend a saved rest day instead.
+  Future<void> _endToday(AppController app, Attempt a) async {
+    final banked = app.restBanked;
+    if (banked == null || banked == 0) return run(() => app.end(a));
+    final useRest = await showShowdSheet<bool>(
+      context,
+      builder: (sheetContext) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('End today?', style: ShowdType.titleL),
+          const SizedBox(height: ShowdSpace.s2),
+          Text(
+            'Reminders stop either way. A rest day keeps your streak and rhythm.',
+            style: ShowdType.bodyM,
+          ),
+          const SizedBox(height: ShowdSpace.s6),
+          ShowdButton(
+            label: 'Use a rest day ($banked left)',
+            icon: ShowdIcons.rest,
+            onPressed: () => Navigator.pop(sheetContext, true),
+          ),
+          const SizedBox(height: ShowdSpace.s2),
+          ShowdButton(
+            label: 'End without one',
+            tone: ShowdButtonTone.quiet,
+            onPressed: () => Navigator.pop(sheetContext, false),
+          ),
+        ],
+      ),
+    );
+    if (useRest == null) return;
+    return run(() => app.end(a, rest: useRest));
+  }
 
   Future<void> run(Future<void> Function() action) async {
     setState(() {
@@ -84,6 +137,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
           if (mounted) setState(() => released = true);
         });
       }
+      _loadAppNames(c);
       return _released(app, a, c);
     }
     if (a.state.isTerminal) return _result(app, a, c);
@@ -123,6 +177,23 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                   Text(c.title, style: ShowdType.titleXL),
                   const SizedBox(height: ShowdSpace.s2),
                   Text(goalDescription(c), style: ShowdType.bodyM),
+                  if (c.reason?.isNotEmpty == true) ...[
+                    const SizedBox(height: ShowdSpace.s3),
+                    Text(
+                      '“${c.reason}”',
+                      style: ShowdType.bodyL.copyWith(
+                        color: ShowdColors.paper,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                  if (c.verifierType == VerifierType.leetcode) ...[
+                    const SizedBox(height: ShowdSpace.s2),
+                    Text(
+                      'Beta · if LeetCode can’t be reached, it won’t count as a miss.',
+                      style: ShowdType.caption,
+                    ),
+                  ],
                   const SizedBox(height: ShowdSpace.s8),
                   BigNumber(
                     number.value,
@@ -187,7 +258,14 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 children: [
                   if (open) ...[
                     ShowdButton(
-                      label: tracking ? 'Keep proving' : 'Start proving',
+                      label: c.verifierConfig is TagScanConfig
+                          ? 'Scan my tag'
+                          : tracking
+                          ? 'Keep proving'
+                          : 'Start proving',
+                      icon: c.verifierConfig is TagScanConfig
+                          ? ShowdIcons.tagScan
+                          : null,
                       busy: busy,
                       onPressed: () => run(() => app.start(a)),
                     ),
@@ -197,7 +275,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                     key: ShowdKeys.endToday,
                     label: 'Hold to end today',
                     enabled: !busy,
-                    onConfirmed: () => run(() => app.end(a)),
+                    onConfirmed: () => _endToday(app, a),
                   ),
                   if (open)
                     ShowdButton(
@@ -239,13 +317,12 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
               ),
               children: [
                 const SizedBox(height: ShowdSpace.s12),
-                Center(
-                  child: ShowdMark(state: markStateFor(a.state), size: 96),
-                ),
+                Center(child: ShowdMark(state: attemptMark(a), size: 96)),
                 const SizedBox(height: ShowdSpace.s8),
                 Text(
                   key: ShowdKeys.attemptOutcome(a.state),
                   switch (a.state) {
+                    _ when a.restCovered => 'Rest day.\nRhythm kept.',
                     AttemptState.abandoned =>
                       'Ended today.\nNo points, no guilt.',
                     AttemptState.expired => 'Missed today.\nNever miss twice.',
@@ -290,6 +367,12 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
     const ink = ShowdColors.ink;
     final soft = ink.withValues(alpha: .72);
     final source = a.evidence?['sourceLabel'] ?? a.evidence?['source'];
+    final reaches = app.reachesFor(a.id);
+    final held = c.restrictions.enabled && c.restrictions.packages.isNotEmpty
+        ? c.restrictions.packages.first
+        : null;
+    final heldName = held == null ? null : appNames[held];
+    final offer = app.ladderOffer(c.id);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
       child: Scaffold(
@@ -361,6 +444,14 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                             textAlign: TextAlign.center,
                             style: ShowdType.bodyM.copyWith(color: soft),
                           ),
+                          if (reaches > 0) ...[
+                            const SizedBox(height: ShowdSpace.s4),
+                            Text(
+                              'You reached for ${heldName ?? 'it'} $reaches time${reaches == 1 ? '' : 's'} and still showed up.',
+                              textAlign: TextAlign.center,
+                              style: ShowdType.bodyL.copyWith(color: ink),
+                            ),
+                          ],
                           if (app.preview) ...[
                             const SizedBox(height: ShowdSpace.s2),
                             Text(
@@ -386,10 +477,34 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 child: Column(
                   children: [
                     if (localError != null) ShowdNotice(localError!),
+                    if (offer != null && offer.up) ...[
+                      _LadderCard(
+                        text:
+                            'Six of your last seven. Ready for ${offer.change}?',
+                        accept: 'Make it ${offer.change}',
+                        onAccept: () => run(() => app.acceptLadder(offer)),
+                        onDismiss: () => app.dismissLadder(c.id),
+                      ),
+                      const SizedBox(height: ShowdSpace.s3),
+                    ],
+                    if (held != null) ...[
+                      ShowdButton(
+                        label: 'Open ${heldName ?? 'your app'}',
+                        tone: ShowdButtonTone.onAccent,
+                        onPressed: () => run(() async {
+                          if (!await BlockerChannel.openApp(held)) {
+                            throw StateError('That app couldn’t be opened.');
+                          }
+                        }),
+                      ),
+                      const SizedBox(height: ShowdSpace.s2),
+                    ],
                     ShowdButton(
                       label: 'Share proof',
                       icon: ShowdIcons.share,
-                      tone: ShowdButtonTone.onAccent,
+                      tone: held == null
+                          ? ShowdButtonTone.onAccent
+                          : ShowdButtonTone.quiet,
                       busy: busy,
                       onPressed: () => run(() => _share(c, a, app.preview)),
                     ),
@@ -459,4 +574,47 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
       ),
     );
   }
+}
+
+class _LadderCard extends StatelessWidget {
+  const _LadderCard({
+    required this.text,
+    required this.accept,
+    required this.onAccept,
+    required this.onDismiss,
+  });
+
+  final String text;
+  final String accept;
+  final VoidCallback onAccept;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
+    decoration: BoxDecoration(
+      color: ShowdColors.ink.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(ShowdRadius.card),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(text, style: ShowdType.bodyL.copyWith(color: ShowdColors.ink)),
+        Row(
+          children: [
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: ShowdColors.ink),
+              onPressed: onAccept,
+              child: Text(accept),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: ShowdColors.ink),
+              onPressed: onDismiss,
+              child: const Text('Not yet'),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }

@@ -15,6 +15,7 @@ import '../../models/enums.dart';
 import '../../models/verifier_config.dart';
 import '../../services/billing.dart';
 import '../../services/controller.dart';
+import '../../services/repository.dart' show proProofMessage;
 import '../wizard.dart';
 import 'attempt.dart';
 import 'pro.dart';
@@ -88,6 +89,14 @@ Future<void> showProSheet(
 /// tier talking, otherwise as a plain message.
 Future<void> showLimitOrMessage(BuildContext context, Object error) {
   final message = friendlyError(error);
+  if (message == proProofMessage) {
+    return showProSheet(
+      context,
+      title: 'Gym, places and GPS walks are Pro.',
+      body:
+          'They check you in automatically when you get there. Steps, phone-down focus, tag scans and LeetCode stay free.',
+    );
+  }
   if (message.startsWith('Free')) {
     return showProSheet(
       context,
@@ -104,6 +113,13 @@ Future<void> showMessage(BuildContext context, String text) async {
     SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
   );
 }
+
+/// Mark for an attempt, including rest days.
+MarkState attemptMark(Attempt attempt) =>
+    attempt.restCovered ? MarkState.rest : markStateFor(attempt.state);
+
+String attemptLabel(Attempt attempt) =>
+    attempt.restCovered ? 'Rest day' : stateLabel(attempt.state);
 
 String stateLabel(AttemptState state) => switch (state) {
   AttemptState.pending => 'Open',
@@ -125,8 +141,10 @@ ShowdIcons kindIcon(CommitmentKind kind) => switch (kind) {
   CommitmentKind.gym => ShowdIcons.gym,
   CommitmentKind.arrive => ShowdIcons.arrive,
   CommitmentKind.focus => ShowdIcons.focus,
-  CommitmentKind.workout => ShowdIcons.steps,
+  CommitmentKind.workout => ShowdIcons.gym,
   CommitmentKind.leetcode => ShowdIcons.code,
+  CommitmentKind.steps => ShowdIcons.steps,
+  CommitmentKind.tagScan => ShowdIcons.tagScan,
 };
 
 String kindLabel(CommitmentKind kind) => switch (kind) {
@@ -136,6 +154,8 @@ String kindLabel(CommitmentKind kind) => switch (kind) {
   CommitmentKind.focus => 'Phone-down focus',
   CommitmentKind.workout => 'Workout',
   CommitmentKind.leetcode => 'LeetCode',
+  CommitmentKind.steps => 'Steps',
+  CommitmentKind.tagScan => 'Tag scan',
 };
 
 String hhmm(DateTime value) => DateFormat('HH:mm').format(value.toLocal());
@@ -184,6 +204,8 @@ String goalDescription(Commitment c) {
       '${targetDurationMs ~/ 60000} recorded workout minutes',
     LeetCodeConfig(:final targetAccepted, :final username) =>
       '$targetAccepted accepted problem${targetAccepted == 1 ? '' : 's'} on @$username',
+    TagScanConfig(:final label) =>
+      'Scan your tag${label?.isNotEmpty == true ? ' at $label' : ''}',
   };
 }
 
@@ -199,7 +221,9 @@ String proofDescription(Commitment c) => switch (c.verifierConfig) {
   LeetCodeConfig() =>
     'New accepted problems on your public LeetCode profile count if they land inside the window.',
   StepsConfig() =>
-    'Android’s step counter must record new steps during the window.',
+    'Android’s step counter must record new steps during the window, at a pace a person can walk.',
+  TagScanConfig() =>
+    'Scan the same code you set up. Google’s scanner reads it on the phone, and only a scrambled fingerprint is compared.',
 };
 
 /// The one number on the proof screen, with its unit line.
@@ -232,6 +256,10 @@ String proofDescription(Commitment c) => switch (c.verifierConfig) {
       value: '${(p * targetAccepted).floor()}',
       unit: 'of $targetAccepted accepted',
     ),
+    TagScanConfig(:final label) => (
+      value: p >= 1 ? 'Scanned' : 'Scan',
+      unit: label?.isNotEmpty == true ? 'at $label' : 'your tag',
+    ),
   };
 }
 
@@ -251,11 +279,11 @@ class AttemptRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ShowdRow(
     onTap: () => openAttempt(context, attempt),
-    leading: ShowdMark(state: markStateFor(attempt.state), size: 32),
+    leading: ShowdMark(state: attemptMark(attempt), size: 32),
     title: title,
     subtitle: DateFormat('EEE d MMM').format(DateTime.parse(attempt.date)),
     trailing: Text(
-      stateLabel(attempt.state),
+      attemptLabel(attempt),
       style: ShowdType.bodyM.copyWith(
         color: attempt.state == AttemptState.completed
             ? ShowdColors.accent

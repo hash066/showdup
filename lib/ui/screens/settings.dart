@@ -396,6 +396,14 @@ class PrivacyScreen extends StatelessWidget {
                     'Alarms, history, reminders and proof stay on this device. If you join Battles, Firebase receives your chosen name, companion, battle membership and weekly outcomes and scores. Alarm names, step counts, locations and proof are never uploaded for Battles. RevenueCat receives an anonymous ID and your subscription status.',
                   ),
                   (
+                    'Steps',
+                    'With physical activity access, Android’s step counter reports how many steps you took during the alarm window. Only the count and timing stay on this phone.',
+                  ),
+                  (
+                    'Tag scans',
+                    'Google Play services opens its own scanner, so ShowdUp never gets camera access. Only a scrambled fingerprint of the code is kept, never what it says.',
+                  ),
+                  (
                     'Walks',
                     'Walk proof starts when you open the alarm or its first reminder rings. GPS measures real movement and ignores fake, stale and blurry locations. It proves the phone moved, not how hard you worked.',
                   ),

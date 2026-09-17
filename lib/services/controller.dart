@@ -8,9 +8,11 @@ import '../models/enums.dart';
 import '../platform/alarm_channel.dart';
 import '../platform/blocker_channel.dart';
 import '../platform/overlay_channel.dart';
+import '../core/features.dart';
 import '../models/pet.dart';
 import '../verification/verifier.dart';
 import '../verification/verifier_registry.dart';
+import 'ladder_policy.dart';
 import 'repository.dart';
 import 'social_service.dart';
 
@@ -81,6 +83,7 @@ class AppController extends ChangeNotifier {
         await _recoverNativeFailures(repository as LocalRepository);
         await _recoverNativeReminderCounts(repository as LocalRepository);
         await _recoverNativeExpirations(repository as LocalRepository);
+        await _recoverReaches(repository as LocalRepository);
       }
       await repository.call('syncAttempts', {});
       error = null;
@@ -139,6 +142,61 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> _recoverReaches(LocalRepository local) async {
+    try {
+      final counts = await BlockerChannel.reaches();
+      if (counts.isNotEmpty) await local.recordReaches(counts);
+    } on MissingPluginException {
+      // Tests and previews have no blocker.
+    } on PlatformException {
+      // Older native builds do not count reaches yet.
+    }
+  }
+
+  LocalRepository? get _local =>
+      repository is LocalRepository ? repository as LocalRepository : null;
+
+  /// Times the held app was opened during [attemptId].
+  int reachesFor(String attemptId) => _local?.reachesFor(attemptId) ?? 0;
+
+  /// Rest days saved, or null when rest days are off.
+  int? get restBanked => _local?.restDays == true ? _local!.rest.banked : null;
+
+  Future<bool> planRest(String date) async {
+    final local = _local;
+    if (local == null) return false;
+    final planned = await local.planRest(date);
+    if (planned) await _configure();
+    notifyListeners();
+    return planned;
+  }
+
+  /// A right-size offer for [commitmentId], if its recent record suggests one.
+  LadderOffer? ladderOffer(String commitmentId) {
+    final local = _local;
+    final owner = commitment(commitmentId);
+    if (!Features.ladder || local == null || owner == null) return null;
+    if (owner.status != CommitmentStatus.active ||
+        local.ladderHidden(commitmentId)) {
+      return null;
+    }
+    return LadderPolicy.offer(
+      owner,
+      attempts,
+      targetSinceMs: local.targetSinceMs(commitmentId),
+    );
+  }
+
+  Future<void> acceptLadder(LadderOffer offer) => repository.update(
+    offer.commitmentId,
+    {'verifierConfig': offer.config.toJson(), 'title': offer.title},
+  );
+
+  Future<void> dismissLadder(String commitmentId) async {
+    await _local?.dismissLadder(commitmentId);
+    notifyListeners();
+  }
+
   PetSnapshot get petSnapshot {
     final local = repository is LocalRepository
         ? repository as LocalRepository
@@ -164,7 +222,6 @@ class AppController extends ChangeNotifier {
         .where((a) => a.state == AttemptState.pending && a.isWindowOpen)
         .firstOrNull;
     final currentSnoozes = active?.snoozes ?? 0;
-    final penalty = local?.weeklyPetPenalty(monday) ?? 0;
     final social = SocialService.instance;
     final myUid = social.user?.uid;
     final myScore = social.latestScores
@@ -175,16 +232,15 @@ class AppController extends ChangeNotifier {
       mood: PetScoring.mood(
         recentAttempts: recent,
         currentSnoozes: currentSnoozes,
-        cracked: local?.petCracked ?? false,
       ),
-      weeklyScore: PetScoring.normalizedScore(weekly, penalty: penalty),
+      weeklyScore: PetScoring.normalizedScore(weekly),
       todayCompleted: today
           .where((a) => a.state == AttemptState.completed)
           .length,
       todayTotal: today.length,
       streak: user?.stats.currentStreak ?? 0,
       consecutiveMisses: PetScoring.consecutiveMisses(attempts),
-      burstCount: local?.burstCount ?? 0,
+      burstCount: 0,
       activeAttemptId: active?.id,
       activeTitle: active == null
           ? null
@@ -332,7 +388,14 @@ class AppController extends ChangeNotifier {
         {
           'commitments': commitments
               .where((c) => c.status == CommitmentStatus.active)
-              .map((c) => {'id': c.id, ...c.toJson()})
+              .map(
+                (c) => {
+                  'id': c.id,
+                  ...c.toJson(),
+                  // Native alarms skip planned rest days.
+                  'skipDates': _local?.plannedRestDates ?? const <String>[],
+                },
+              )
               .toList(),
         },
       );
@@ -345,11 +408,16 @@ class AppController extends ChangeNotifier {
   Future<void> _syncRestrictions() async {
     if (preview) return;
     final sessions = <BlockerSession>[];
-    if (user?.isPro == true) {
-      for (final attempt in attempts) {
-        if (attempt.state != AttemptState.pending || !attempt.isWindowOpen) {
-          continue;
-        }
+    final isPro = user?.isPro == true;
+    // Pro holds every chosen app. Free holds one app on one alarm once the
+    // catch ships; native code applies the same clamp.
+    if (isPro || Features.catchEnabled) {
+      final open =
+          attempts
+              .where((a) => a.state == AttemptState.pending && a.isWindowOpen)
+              .toList()
+            ..sort((a, b) => a.windowStartAt.compareTo(b.windowStartAt));
+      for (final attempt in open) {
         final owner = commitment(attempt.commitmentId);
         if (owner == null || !owner.restrictions.enabled) continue;
         final packages = owner.restrictions.packages
@@ -360,11 +428,12 @@ class AppController extends ChangeNotifier {
           BlockerSession(
             attemptId: attempt.id,
             commitmentId: attempt.commitmentId,
-            packages: packages,
+            packages: isPro ? packages : packages.take(1).toList(),
             activeFromEpochMs: attempt.windowStartAt.millisecondsSinceEpoch,
             activeUntilEpochMs: attempt.windowEndAt.millisecondsSinceEpoch,
           ),
         );
+        if (!isPro) break;
       }
     }
     try {
@@ -449,7 +518,8 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> end(Attempt a) async {
+  /// Ends today. With [rest], a saved rest day covers it instead.
+  Future<void> end(Attempt a, {bool rest = false}) async {
     if (!preview) {
       await const MethodChannel(
         'app.showdup/alarm',
@@ -461,6 +531,7 @@ class AppController extends ChangeNotifier {
       'commitmentId': a.commitmentId,
       'date': a.date,
       'reason': 'user_ended',
+      if (rest) 'rest': true,
     });
   }
 

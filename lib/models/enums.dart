@@ -7,7 +7,10 @@ enum VerifierType {
   walk('walk'),
   focus('focus'),
   healthWorkout('health_workout'),
-  leetcode('leetcode');
+  leetcode('leetcode'),
+
+  /// Scan a QR code or barcode you placed somewhere, like a bathroom mirror.
+  tagScan('tag_scan');
 
   const VerifierType(this.wire);
   final String wire;
@@ -37,7 +40,9 @@ enum CommitmentKind {
   arrive('arrive'),
   focus('focus'),
   workout('workout'),
-  leetcode('leetcode');
+  leetcode('leetcode'),
+  steps('steps'),
+  tagScan('tag_scan');
 
   const CommitmentKind(this.wire);
   final String wire;
@@ -51,6 +56,8 @@ enum CommitmentKind {
       VerifierType.focus => CommitmentKind.focus,
       VerifierType.healthWorkout => CommitmentKind.workout,
       VerifierType.leetcode => CommitmentKind.leetcode,
+      VerifierType.steps => CommitmentKind.steps,
+      VerifierType.tagScan => CommitmentKind.tagScan,
       _ => CommitmentKind.walk,
     };
   }

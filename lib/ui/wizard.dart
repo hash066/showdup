@@ -12,13 +12,16 @@ import '../design/tokens.dart';
 import '../design/type.dart';
 import '../models/commitment.dart';
 import '../models/enums.dart';
+import '../models/presets.dart';
 import '../models/verifier_config.dart';
 import '../platform/alarm_channel.dart';
 import '../platform/blocker_channel.dart';
 import '../platform/health_channel.dart';
 import '../platform/overlay_channel.dart';
 import '../platform/places_channel.dart';
+import '../platform/scanner_channel.dart';
 import '../services/controller.dart';
+import '../verification/leetcode_verifier.dart';
 import '../verification/verifier_registry.dart';
 import 'app_provider.dart';
 import 'keys.dart';
@@ -44,7 +47,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       label = TextEditingController(),
       zone = TextEditingController(),
       username = TextEditingController(),
-      appSearch = TextEditingController();
+      appSearch = TextEditingController(),
+      tagLabel = TextEditingController(),
+      reason = TextEditingController();
   String? placeId, placeAddress;
   int page = 0,
       walkMinutes = 15,
@@ -52,6 +57,8 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       focusMinutes = 25,
       workoutMinutes = 30,
       targetAccepted = 1,
+      targetSteps = 3000,
+      radiusM = 150,
       interval = 20,
       maxReminders = 6;
   WalkGoalMode walkMode = WalkGoalMode.duration;
@@ -63,8 +70,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
   List<BlockableApp> blockableApps = const [];
   final Set<String> selectedPackages = {};
   bool loadingApps = false;
-  VerifierType type = VerifierType.walk;
-  CommitmentKind kind = CommitmentKind.walk;
+  VerifierType type = VerifierType.steps;
+  CommitmentKind kind = CommitmentKind.steps;
+  String? tagHash;
+
+  /// LeetCode ownership: the one-time code and when it was confirmed.
+  final String ownershipCode = LeetCodeVerifier.newOwnershipCode();
+  int? ownerVerifiedAtMs;
+  bool checkingOwner = false;
   String workoutType = 'any';
   AlarmPermissionStatus? alarmPermissions;
   HealthAvailability? healthAvailability;
@@ -81,10 +94,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     WidgetsBinding.instance.addObserver(this);
     final c = widget.existing;
     if (c != null) {
-      type = c.verifierType == VerifierType.steps
-          ? VerifierType.walk
-          : c.verifierType;
+      type = c.verifierType;
       kind = c.kind;
+      reason.text = c.reason ?? '';
       days = c.schedule.daysOfWeek.toSet();
       start = _time(c.schedule.windowStartLocal);
       end = _time(c.schedule.windowEndLocal);
@@ -110,7 +122,13 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
         placeId = cfg.placeId;
         placeAddress = cfg.address;
       }
+      if (cfg is StepsConfig) targetSteps = cfg.targetSteps;
+      if (cfg is TagScanConfig) {
+        tagHash = cfg.codeHash;
+        tagLabel.text = cfg.label ?? '';
+      }
       if (cfg is LocationConfig) {
+        radiusM = cfg.radiusM.clamp(100, 300);
         lat.text = cfg.lat.toString();
         lng.text = cfg.lng.toString();
         label.text = cfg.label ?? '';
@@ -128,10 +146,11 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       if (cfg is LeetCodeConfig) {
         username.text = cfg.username;
         targetAccepted = cfg.targetAccepted;
+        ownerVerifiedAtMs = cfg.ownerVerifiedAtMs;
       }
       title.text = _presetTitle;
     } else {
-      title.text = 'Morning walk';
+      title.text = _presetTitle;
       zone.text = ref.read(appProvider).user?.timezone ?? 'Asia/Kolkata';
       _restoreGuardrailProfile();
     }
@@ -141,7 +160,17 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    for (final c in [title, lat, lng, label, zone, username, appSearch]) {
+    for (final c in [
+      title,
+      lat,
+      lng,
+      label,
+      zone,
+      username,
+      appSearch,
+      tagLabel,
+      reason,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -167,21 +196,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
   String _clock(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
-  String get _presetTitle => switch (kind) {
-    CommitmentKind.gym => 'Gym session',
-    CommitmentKind.arrive =>
-      'Arrive at ${label.text.isEmpty ? 'my place' : label.text}',
-    CommitmentKind.focus => 'Focus for $focusMinutes minutes',
-    CommitmentKind.workout => 'Workout for $workoutMinutes minutes',
-    CommitmentKind.leetcode =>
-      'Solve $targetAccepted LeetCode problem${targetAccepted == 1 ? '' : 's'}',
-    CommitmentKind.walk when walkMode == WalkGoalMode.duration =>
-      'Walk for $walkMinutes minutes',
-    CommitmentKind.walk when walkMode == WalkGoalMode.distance =>
-      'Walk ${(walkDistanceM / 1000).toStringAsFixed(walkDistanceM % 1000 == 0 ? 0 : 2)} km',
-    CommitmentKind.walk =>
-      'Walk to ${label.text.isEmpty ? 'my destination' : label.text}',
-  };
+  String get _presetTitle => defaultTitle(kind, config);
 
   String get _goalSummary => switch (config) {
     WalkConfig(mode: WalkGoalMode.duration) =>
@@ -190,9 +205,11 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       '${(walkDistanceM / 1000).toStringAsFixed(2)} km by GPS',
     WalkConfig(mode: WalkGoalMode.destination) =>
       'Get within 150 m of ${label.text.isEmpty ? 'your destination' : label.text}',
-    StepsConfig(:final targetSteps) => '$targetSteps new steps',
+    StepsConfig(:final targetSteps) => '$targetSteps new steps in the window',
+    TagScanConfig(:final label) =>
+      'Scan the tag ${label?.isNotEmpty == true ? 'at $label' : 'you placed'}',
     LocationConfig() =>
-      'Stay at ${label.text.isEmpty ? 'your place' : label.text} for ${kind == CommitmentKind.gym ? 5 : 2} minutes',
+      'Within $radiusM m of ${label.text.isEmpty ? 'your place' : label.text} for ${kind == CommitmentKind.gym ? 5 : 2} minutes',
     FocusConfig() =>
       '$focusMinutes minutes away from ${selectedPackages.length} app${selectedPackages.length == 1 ? '' : 's'}',
     HealthWorkoutConfig() => '$workoutMinutes recorded workout minutes',
@@ -214,13 +231,17 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     VerifierType.location => LocationConfig(
       lat: double.tryParse(lat.text) ?? double.nan,
       lng: double.tryParse(lng.text) ?? double.nan,
-      radiusM: 150,
+      radiusM: radiusM,
       dwellMs: (kind == CommitmentKind.gym ? 5 : 2) * 60000,
       label: label.text.trim(),
       placeId: placeId,
       address: placeAddress,
     ),
-    VerifierType.steps => const StepsConfig(targetSteps: 1000),
+    VerifierType.steps => StepsConfig(targetSteps: targetSteps),
+    VerifierType.tagScan => TagScanConfig(
+      codeHash: tagHash ?? '',
+      label: tagLabel.text.trim().isEmpty ? null : tagLabel.text.trim(),
+    ),
     VerifierType.focus => FocusConfig(
       packages: selectedPackages.toList()..sort(),
       targetDurationMs: focusMinutes * 60000,
@@ -232,8 +253,18 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     VerifierType.leetcode => LeetCodeConfig(
       username: username.text.trim(),
       targetAccepted: targetAccepted,
+      ownerVerifiedAtMs: ownerVerifiedAtMs,
     ),
   };
+
+  /// A new LeetCode setup, or a changed username, needs the ownership code.
+  bool get _needsOwnerCheck {
+    if (type != VerifierType.leetcode || ownerVerifiedAtMs != null) {
+      return false;
+    }
+    final old = widget.existing?.verifierConfig;
+    return old is! LeetCodeConfig || old.username != username.text.trim();
+  }
 
   ReminderConfig get reminder => ReminderConfig(
     intervalMinutes: interval,
@@ -266,8 +297,23 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
 
   Future<void> next() async {
     setState(() => error = null);
+    if (page == 0 && !_isPro && presetIsPro(kind)) {
+      await showProSheet(
+        context,
+        title: 'Gym, places and GPS walks are Pro.',
+        body:
+            'They check you in automatically when you get there. Steps, phone-down focus, tag scans and LeetCode stay free.',
+      );
+      return;
+    }
     final String? problem = switch (page) {
-      0 => _focus && selectedPackages.isEmpty ? null : config.validate(),
+      0 when !_focus || selectedPackages.isNotEmpty =>
+        config.validate() ??
+            (_needsOwnerCheck
+                ? 'Add the code to your LeetCode About, then tap Check.'
+                : null),
+      0 when _needsOwnerCheck =>
+        'Add the code to your LeetCode About, then tap Check.',
       1 => schedule.validate() ?? reminder.validate(),
       2 when _focus && selectedPackages.isEmpty =>
         'Pick at least one app that pulls you away.',
@@ -314,6 +360,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
         'verifierConfig': config.toJson(),
         'schedule': schedule.toJson(),
         'reminder': reminder.toJson(),
+        'reason': reason.text.trim(),
         'status': shouldActivate
             ? CommitmentStatus.active.wire
             : CommitmentStatus.draft.wire,
@@ -486,6 +533,57 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     }
   }
 
+  Future<void> scanTag() async {
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final hash = await ScannerChannel.scan();
+      if (hash != null && mounted) {
+        setState(() {
+          tagHash = hash;
+          title.text = _presetTitle;
+        });
+      }
+    } on MissingPluginException {
+      if (mounted) setState(() => error = 'Scanning works on your phone.');
+    } catch (e) {
+      if (mounted) setState(() => error = friendlyError(e));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> checkOwner() async {
+    final name = username.text.trim();
+    final invalid = LeetCodeConfig(username: name).validate();
+    if (invalid != null) {
+      setState(() => error = invalid);
+      return;
+    }
+    setState(() {
+      checkingOwner = true;
+      error = null;
+    });
+    try {
+      final found = await LeetCodeVerifier.profileContains(name, ownershipCode);
+      if (!mounted) return;
+      setState(() {
+        if (found) {
+          ownerVerifiedAtMs = DateTime.now().millisecondsSinceEpoch;
+        } else {
+          error =
+              'The code isn’t in your About yet. Saves can take a minute to show.';
+        }
+      });
+    } catch (e) {
+      if (mounted) setState(() => error = friendlyError(e));
+    } finally {
+      if (mounted) setState(() => checkingOwner = false);
+    }
+  }
+
   void _selectPreset(CommitmentKind value) => setState(() {
     kind = value;
     type = switch (value) {
@@ -494,6 +592,8 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       CommitmentKind.focus => VerifierType.focus,
       CommitmentKind.workout => VerifierType.healthWorkout,
       CommitmentKind.leetcode => VerifierType.leetcode,
+      CommitmentKind.steps => VerifierType.steps,
+      CommitmentKind.tagScan => VerifierType.tagScan,
     };
     title.text = _presetTitle;
     error = null;
@@ -641,37 +741,88 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     _ => 'Change any of it later.',
   };
 
-  List<Widget> _presetStep() => [
-    for (final (preset, subtitle) in [
-      (CommitmentKind.walk, 'Time or distance, checked by GPS'),
-      (CommitmentKind.gym, 'Checks you in when you get there'),
-      (CommitmentKind.arrive, 'Class, office, library'),
-      (CommitmentKind.focus, 'Time away from the apps you pick'),
-      (CommitmentKind.workout, 'Recorded in Health Connect'),
-      (
-        CommitmentKind.leetcode,
-        'Accepted problems on your public profile · beta',
-      ),
-    ])
-      // A hidden preset stays visible only while editing an alarm that
-      // already uses it, so existing setups remain editable.
-      if (Features.presetEnabled(preset) || kind == preset)
-        ChoiceRow(
-          key: ShowdKeys.wizardPreset(preset),
-          title: kindLabel(preset),
-          subtitle: subtitle,
-          leading: ShowdIcon(
-            kindIcon(preset),
-            color: kind == preset ? ShowdColors.accent : ShowdColors.paper,
+  List<Widget> _presetStep() {
+    final isPro = _isPro;
+    return [
+      for (final (preset, subtitle) in [
+        (CommitmentKind.steps, 'New steps, counted by your phone'),
+        (CommitmentKind.focus, 'Time away from the apps you pick'),
+        (CommitmentKind.tagScan, 'Scan a code you stick where it happens'),
+        (CommitmentKind.leetcode, 'Accepted problems on your profile · beta'),
+        (CommitmentKind.workout, 'Recorded in Health Connect'),
+        (CommitmentKind.gym, 'Checks you in when you get there'),
+        (CommitmentKind.arrive, 'Class, office, library'),
+        (CommitmentKind.walk, 'Time or distance, checked by GPS'),
+      ])
+        // A hidden preset stays visible only while editing an alarm that
+        // already uses it, so existing setups remain editable.
+        if (Features.presetEnabled(preset) || kind == preset)
+          ChoiceRow(
+            key: ShowdKeys.wizardPreset(preset),
+            title: kindLabel(preset),
+            subtitle: subtitle,
+            pro: !isPro && presetIsPro(preset),
+            leading: ShowdIcon(
+              kindIcon(preset),
+              color: kind == preset ? ShowdColors.accent : ShowdColors.paper,
+            ),
+            selected: kind == preset,
+            onTap: () => _selectPreset(preset),
           ),
-          selected: kind == preset,
-          onTap: () => _selectPreset(preset),
-        ),
-    const SizedBox(height: ShowdSpace.s8),
-    ..._presetDetail(),
-  ];
+      const SizedBox(height: ShowdSpace.s8),
+      ..._presetDetail(),
+    ];
+  }
 
   List<Widget> _presetDetail() => switch (kind) {
+    CommitmentKind.steps => [
+      _amount(
+        value: '$targetSteps',
+        unit: 'new steps',
+        slider: Slider(
+          value: targetSteps.toDouble(),
+          min: 500,
+          max: 15000,
+          divisions: 29,
+          onChanged: (v) => setState(() {
+            targetSteps = (v / 500).round() * 500;
+            title.text = _presetTitle;
+          }),
+        ),
+      ),
+      Text(
+        'Only steps taken inside the window count. Keep the phone on you.',
+        style: ShowdType.caption,
+      ),
+    ],
+    CommitmentKind.tagScan => [
+      Text(
+        'Print a QR code or use any barcode, like the one on a toothpaste tube. Put it where the habit happens.',
+        style: ShowdType.bodyM,
+      ),
+      const SizedBox(height: ShowdSpace.s4),
+      TextField(
+        controller: tagLabel,
+        maxLength: 40,
+        onChanged: (_) => setState(() => title.text = _presetTitle),
+        decoration: const InputDecoration(
+          labelText: 'Where is it?',
+          hintText: 'Bathroom mirror',
+        ),
+      ),
+      const SizedBox(height: ShowdSpace.s2),
+      ShowdButton(
+        label: tagHash == null ? 'Scan it now' : 'Scanned · scan again',
+        icon: tagHash == null ? ShowdIcons.tagScan : ShowdIcons.check,
+        tone: ShowdButtonTone.outline,
+        onPressed: busy ? null : scanTag,
+      ),
+      const SizedBox(height: ShowdSpace.s3),
+      Text(
+        'Only a scrambled fingerprint of the code is saved, never what it says.',
+        style: ShowdType.caption,
+      ),
+    ],
     CommitmentKind.walk => [
       const SectionLabel('Goal'),
       const SizedBox(height: ShowdSpace.s2),
@@ -739,9 +890,20 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     ],
     CommitmentKind.gym || CommitmentKind.arrive => [
       ..._placePicker(),
-      const SizedBox(height: ShowdSpace.s3),
+      const SizedBox(height: ShowdSpace.s6),
+      _amount(
+        value: '$radiusM',
+        unit: 'metres around the place',
+        slider: Slider(
+          value: radiusM.toDouble(),
+          min: 100,
+          max: 300,
+          divisions: 8,
+          onChanged: (v) => setState(() => radiusM = (v / 25).round() * 25),
+        ),
+      ),
       Text(
-        'Checks you stay within 150 m for ${kind == CommitmentKind.gym ? 5 : 2} minutes in a row.',
+        'Checks you stay within $radiusM m for ${kind == CommitmentKind.gym ? 5 : 2} minutes in a row. Bigger helps when GPS is weak indoors.',
         style: ShowdType.caption,
       ),
     ],
@@ -799,12 +961,51 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       TextField(
         controller: username,
         autocorrect: false,
-        onChanged: (_) => setState(() {}),
+        onChanged: (_) => setState(() => ownerVerifiedAtMs = null),
         decoration: const InputDecoration(
           labelText: 'Public LeetCode username',
           helperText: 'No password, token or cookie. Ever.',
         ),
       ),
+      const SizedBox(height: ShowdSpace.s4),
+      if (ownerVerifiedAtMs != null)
+        ShowdRow(
+          leading: const ShowdIcon(ShowdIcons.check, color: ShowdColors.accent),
+          title: 'That profile is yours',
+          subtitle: 'You can remove the code from your About now.',
+        )
+      else ...[
+        Text('Show it’s your profile', style: ShowdType.titleM),
+        const SizedBox(height: ShowdSpace.s1),
+        Text(
+          'Paste this into About me on your LeetCode profile, save, then check.',
+          style: ShowdType.bodyM,
+        ),
+        const SizedBox(height: ShowdSpace.s3),
+        Row(
+          children: [
+            Expanded(
+              child: SelectableText(
+                ownershipCode,
+                style: ShowdType.titleM.copyWith(color: ShowdColors.accent),
+              ),
+            ),
+            ShowdIconButton(
+              icon: ShowdIcons.share,
+              semanticLabel: 'Copy code',
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: ownershipCode));
+                showMessage(context, 'Code copied.');
+              },
+            ),
+          ],
+        ),
+        ShowdButton(
+          label: checkingOwner ? 'Checking…' : 'Check',
+          tone: ShowdButtonTone.outline,
+          onPressed: checkingOwner || _preview ? null : checkOwner,
+        ),
+      ],
       const SizedBox(height: ShowdSpace.s6),
       _amount(
         value: '$targetAccepted',
@@ -1201,6 +1402,17 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       Text(_presetTitle, style: ShowdType.titleL),
       Text(_goalSummary, style: ShowdType.bodyM),
       const SizedBox(height: ShowdSpace.s6),
+      TextField(
+        controller: reason,
+        maxLength: 120,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          labelText: 'Why does this matter to you?',
+          hintText: 'So I feel awake before work',
+          helperText: 'Optional. You’ll see it when the alarm rings.',
+        ),
+      ),
+      const SizedBox(height: ShowdSpace.s4),
       ShowdRow(
         leading: const ShowdIcon(ShowdIcons.calendar),
         title: daysLabel(days.toList()),
@@ -1238,6 +1450,12 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
         preview || permission?.exactAlarm == true,
         () => AlarmChannel.requestPermission('exactAlarm'),
       ),
+      if (type == VerifierType.steps)
+        ready(
+          'Physical activity',
+          preview || permission?.activityRecognition == true,
+          () => AlarmChannel.requestPermission('activityRecognition'),
+        ),
       if (type == VerifierType.walk || type == VerifierType.location)
         ready(
           'Precise location',
@@ -1255,6 +1473,25 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           'Accessibility access',
           preview || blockerStatus?.accessibilityEnabled == true,
           BlockerChannel.openAccessibilitySettings,
+        ),
+      if (!preview)
+        ShowdRow(
+          leading: const ShowdIcon(ShowdIcons.alarm),
+          title: 'Test alarm',
+          subtitle: 'Rings once in 10 seconds so you know it works.',
+          onTap: () async {
+            try {
+              await AlarmChannel.testAlarm();
+              if (mounted) {
+                showMessage(
+                  context,
+                  'Lock your phone. It rings in 10 seconds.',
+                );
+              }
+            } catch (e) {
+              if (mounted) showMessage(context, friendlyError(e));
+            }
+          },
         ),
       const SizedBox(height: ShowdSpace.s3),
       Text(

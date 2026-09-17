@@ -17,6 +17,8 @@ import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.widget.PlaceAutocomplete
 import com.google.android.libraries.places.widget.PlaceAutocompleteActivity
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.*
@@ -76,7 +78,10 @@ class MainActivity:FlutterFragmentActivity(){
    "openAccessibilitySettings"-> { AppBlocker.openAccessibilitySettings(this); result.success(true) }
    "configure"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();val packages=(a["packages"] as? List<*>)?.mapNotNull{it?.toString()}?:emptyList();result.success(AppBlocker.configure(this,packages,(a["activeUntilEpochMs"] as? Number)?.toLong()?:0,a["commitmentId"]?.toString(),a["attemptId"]?.toString(),(a["activeFromEpochMs"] as? Number)?.toLong()?:System.currentTimeMillis()))}
    "sync"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();val sessions=(a["sessions"] as? List<*>)?.mapNotNull{it as? Map<*,*>}?:emptyList();result.success(AppBlocker.sync(this,sessions))}
-   "setEntitlement"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();AppBlocker.setEntitlement(this,a["enabled"]==true,(a["expiresAtEpochMs"] as? Number)?.toLong());result.success(true)}
+   "setEntitlement"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();AppBlocker.setEntitlement(this,a["enabled"]==true,(a["expiresAtEpochMs"] as? Number)?.toLong(),a["freeCatch"]==true);result.success(true)}
+   "reaches"->result.success(AppBlocker.reaches(this))
+   "appLabels"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();result.success(AppBlocker.appLabels(this,(a["packages"] as? List<*>)?.mapNotNull{it?.toString()}.orEmpty()))}
+   "openApp"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();result.success(AppBlocker.openApp(this,a["packageName"]?.toString().orEmpty()))}
    "stop"->{val a=call.arguments as? Map<*,*>;AppBlocker.stop(this,a?.get("attemptId")?.toString());result.success(true)}
    "startFocus"->{result.success(FocusTracker.start(this,call.arguments as? Map<*,*>?:emptyMap<String,Any>()))}
    "focusStatus"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();result.success(FocusTracker.status(this,a["attemptId"]?.toString().orEmpty()))}
@@ -113,6 +118,16 @@ class MainActivity:FlutterFragmentActivity(){
    "checkWorkout"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();CoroutineScope(Dispatchers.IO).launch{try{val value=HealthConnectBridge.checkWorkout(this@MainActivity,a);withContext(Dispatchers.Main){result.success(value)}}catch(e:Exception){withContext(Dispatchers.Main){result.error("health_error",e.message,null)}}}}
    else->result.notImplemented()
   }}catch(e:Exception){result.error("health_error",e.message,null)}}
+  MethodChannel(engine.dartExecutor.binaryMessenger,"app.showdup/scanner").setMethodCallHandler{call,result->try{when(call.method){
+   "scan"->{
+    val options=GmsBarcodeScannerOptions.Builder().enableAutoZoom().build()
+    GmsBarcodeScanning.getClient(this,options).startScan()
+     .addOnSuccessListener{code->val raw=code.rawValue;if(raw.isNullOrEmpty())result.error("scan_empty","That code has nothing in it. Try another.",null)else result.success(sha256(raw))}
+     .addOnCanceledListener{result.success(null)}
+     .addOnFailureListener{e->result.error("scan_failed",e.message?:"The scanner couldn't start. Update Google Play services and try again.",null)}
+   }
+   else->result.notImplemented()
+  }}catch(e:Exception){result.error("scan_failed",e.message,null)}}
   AlarmEngine.channels(this)
   if(intent.getBooleanExtra("restoreOverlay",false)){intent.removeExtra("restoreOverlay");OverlayService.enable(this)}
  }
@@ -176,6 +191,7 @@ class MainActivity:FlutterFragmentActivity(){
     }
     if(intent.resolveActivity(packageManager)==null)r.error("clock_missing","No alarm clock app can handle this request.",null)else{startActivity(intent);r.success(true)}
    }
+   "testAlarm"->{r.success(AlarmEngine.scheduleTest(this,(args["seconds"] as? Number)?.toInt()?:10))}
    "showNativeAlarms"->{val i=Intent(AlarmClock.ACTION_SHOW_ALARMS);if(i.resolveActivity(packageManager)==null)r.error("clock_missing","No alarm clock app is available.",null)else{startActivity(i);r.success(true)}}
    "silence"->{AlarmEngine.silence(this,args["attemptId"].toString(),true,"manual");r.success(true)}
    "getLaunchAttempt"->{val launchAttempt=intent.getStringExtra("attemptId")?:intent.data?.getQueryParameter("attemptId");intent.removeExtra("attemptId");intent.data=null;r.success(launchAttempt)}
@@ -235,4 +251,6 @@ private fun JSONArray.toList(): List<Any?> {
   }
  }
 }
+/** Tags are compared by fingerprint so the scanned text never leaves native code. */
+fun sha256(value:String):String=java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
 fun bootId():Long=(System.currentTimeMillis()-SystemClock.elapsedRealtime())/10000

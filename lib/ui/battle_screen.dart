@@ -89,7 +89,7 @@ class _BattleScreenState extends ConsumerState<BattleScreen> {
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final pet = app.petSnapshot;
-    final capacity = app.user?.isPro == true ? 10 : 4;
+    final capacity = battle?.capacity ?? (app.user?.isPro == true ? 10 : 4);
     return ListView(
       padding: const EdgeInsets.fromLTRB(
         ShowdSpace.gutter,

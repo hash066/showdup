@@ -79,6 +79,25 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                 ),
                 const SizedBox(height: ShowdSpace.s6),
                 if (error != null) ShowdNotice(error!),
+                ShowdRow(
+                  leading: const ShowdIcon(
+                    ShowdIcons.alarm,
+                    color: ShowdColors.accent,
+                  ),
+                  title: 'Test alarm',
+                  subtitle:
+                      'Rings once in 10 seconds. Lock the phone to check.',
+                  onTap: () async {
+                    try {
+                      await AlarmChannel.testAlarm();
+                      if (context.mounted) {
+                        showMessage(context, 'Rings in 10 seconds.');
+                      }
+                    } catch (e) {
+                      if (mounted) setState(() => error = friendlyError(e));
+                    }
+                  },
+                ),
                 _row(
                   'Notifications',
                   'So reminders and live progress can show.',
@@ -90,6 +109,12 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                   'So Android rings on time instead of late.',
                   'exactAlarm',
                   status?.exactAlarm,
+                ),
+                _row(
+                  'Physical activity',
+                  'Only for Steps. Lets the step counter see new steps.',
+                  'activityRecognition',
+                  status?.activityRecognition,
                 ),
                 _row(
                   'Precise location',

@@ -7,6 +7,7 @@ import kotlinx.coroutines.*
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == AlarmEngine.TEST_ACTION) { AlarmEngine.fireTest(context); return }
         val attemptId = intent.getStringExtra("attemptId") ?: return
         if (intent.action == "showdup.snooze") {
             AlarmEngine.silence(context, attemptId, true, "manual")

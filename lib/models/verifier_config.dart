@@ -18,7 +18,40 @@ sealed class VerifierConfig {
         VerifierType.focus => FocusConfig.fromJson(j),
         VerifierType.healthWorkout => HealthWorkoutConfig.fromJson(j),
         VerifierType.leetcode => LeetCodeConfig.fromJson(j),
+        VerifierType.tagScan => TagScanConfig.fromJson(j),
       };
+}
+
+/// A QR code or barcode placed where the habit happens. Only a SHA-256 hash
+/// of the code's value is stored, never the value itself.
+class TagScanConfig extends VerifierConfig {
+  const TagScanConfig({required this.codeHash, this.label});
+
+  final String codeHash;
+  final String? label;
+
+  static final _hash = RegExp(r'^[a-f0-9]{64}$');
+
+  @override
+  VerifierType get type => VerifierType.tagScan;
+
+  @override
+  String? validate() {
+    if (!_hash.hasMatch(codeHash)) return 'Scan your tag to set it up.';
+    if ((label?.length ?? 0) > 40) return 'Keep the place name short.';
+    return null;
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'codeHash': codeHash,
+    if (label?.isNotEmpty == true) 'label': label,
+  };
+
+  factory TagScanConfig.fromJson(Map<String, dynamic> j) => TagScanConfig(
+    codeHash: j['codeHash'] as String? ?? '',
+    label: j['label'] as String?,
+  );
 }
 
 class FocusConfig extends VerifierConfig {
@@ -98,10 +131,18 @@ class HealthWorkoutConfig extends VerifierConfig {
 }
 
 class LeetCodeConfig extends VerifierConfig {
-  const LeetCodeConfig({required this.username, this.targetAccepted = 1});
+  const LeetCodeConfig({
+    required this.username,
+    this.targetAccepted = 1,
+    this.ownerVerifiedAtMs,
+  });
 
   final String username;
   final int targetAccepted;
+
+  /// When the person proved they own the profile by putting a one-time code
+  /// in its About field. No password, token or cookie is ever used.
+  final int? ownerVerifiedAtMs;
 
   @override
   VerifierType get type => VerifierType.leetcode;
@@ -121,11 +162,13 @@ class LeetCodeConfig extends VerifierConfig {
   Map<String, dynamic> toJson() => {
     'username': username.trim(),
     'targetAccepted': targetAccepted,
+    if (ownerVerifiedAtMs != null) 'ownerVerifiedAtMs': ownerVerifiedAtMs,
   };
 
   factory LeetCodeConfig.fromJson(Map<String, dynamic> j) => LeetCodeConfig(
     username: j['username'] as String? ?? '',
     targetAccepted: (j['targetAccepted'] as num?)?.toInt() ?? 1,
+    ownerVerifiedAtMs: (j['ownerVerifiedAtMs'] as num?)?.toInt(),
   );
 }
 

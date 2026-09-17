@@ -8,8 +8,11 @@ import '../models/attempt.dart';
 import '../models/app_user.dart';
 import '../models/enums.dart';
 import '../models/verifier_config.dart';
+import '../core/features.dart';
 import '../core/scheduling.dart';
 import '../models/pet.dart';
+import '../models/presets.dart';
+import 'rest_policy.dart';
 
 abstract class Repository {
   bool get isPreview;
@@ -25,13 +28,23 @@ abstract class Repository {
 /// The normal on-device repository.  It deliberately keeps reminders and
 /// evidence collection on the phone; Firebase is an optional future backup,
 /// not a dependency for using the product.
+/// Shown when a free person tries to turn on a location-based proof.
+const proProofMessage = 'Gym, places and GPS walks are part of ShowdUp Pro.';
+
 class LocalRepository implements Repository {
-  LocalRepository(this.prefs, {DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now {
+  LocalRepository(
+    this.prefs, {
+    DateTime Function()? clock,
+    this.restDays = Features.restDays,
+  }) : _clock = clock ?? DateTime.now {
     _load();
   }
 
+  /// Rest days are behind FEATURE_REST_DAYS; tests switch them on directly.
+  final bool restDays;
+
   static const _storageKey = 'localRepository.v1';
+  static const _restKey = 'rest.v1';
   static const _uidKey = 'localRepository.uid';
   final SharedPreferences prefs;
   final DateTime Function() _clock;
@@ -47,10 +60,14 @@ class LocalRepository implements Repository {
   int? _lastRolloverMs;
   late AppUser _profile;
   MascotId _selectedMascot = MascotId.dot;
-  bool _petCracked = false;
-  int _burstCount = 0;
-  int? _crackedAtMs;
-  List<int> _burstEventsMs = [];
+  late RestLedger _rest;
+
+  /// Times the held app was opened during each attempt, from native code.
+  final Map<String, int> _reaches = {};
+
+  /// When each commitment's current goal took effect, for the ladder.
+  final Map<String, int> _targetSinceMs = {};
+  final Map<String, int> _ladderHiddenUntilMs = {};
 
   /// Serializes writes so a billing update, native-completion recovery and UI
   /// action cannot overwrite each other's SharedPreferences snapshot.
@@ -66,6 +83,7 @@ class LocalRepository implements Repository {
   void _load() {
     _uid = prefs.getString(_uidKey) ?? _newId('device');
     if (!prefs.containsKey(_uidKey)) prefs.setString(_uidKey, _uid);
+    _rest = _loadRest();
     final raw = prefs.getString(_storageKey);
     if (raw != null) {
       try {
@@ -104,13 +122,29 @@ class LocalRepository implements Repository {
           Map<String, dynamic>.from(data['profile'] as Map? ?? {}),
         );
         _selectedMascot = MascotId.fromWire(data['selectedMascot'] as String?);
-        _petCracked = data['petCracked'] == true;
-        _burstCount = (data['burstCount'] as num?)?.toInt() ?? 0;
-        _crackedAtMs = (data['crackedAtMs'] as num?)?.toInt();
-        _burstEventsMs = (data['burstEventsMs'] as List? ?? const [])
-            .whereType<num>()
-            .map((value) => value.toInt())
-            .toList();
+        // Legacy pet crack and burst fields are ignored: misses no longer
+        // cost points.
+        for (final entry in Map<String, dynamic>.from(
+          data['reaches'] as Map? ?? const {},
+        ).entries) {
+          if (entry.value is num) {
+            _reaches[entry.key] = (entry.value as num).toInt();
+          }
+        }
+        for (final entry in Map<String, dynamic>.from(
+          data['ladderHiddenUntilMs'] as Map? ?? const {},
+        ).entries) {
+          if (entry.value is num) {
+            _ladderHiddenUntilMs[entry.key] = (entry.value as num).toInt();
+          }
+        }
+        for (final entry in Map<String, dynamic>.from(
+          data['targetSinceMs'] as Map? ?? const {},
+        ).entries) {
+          if (entry.value is num) {
+            _targetSinceMs[entry.key] = (entry.value as num).toInt();
+          }
+        }
         return;
       } catch (_) {
         // A corrupt local cache must not prevent the user opening the app.
@@ -119,11 +153,25 @@ class LocalRepository implements Repository {
     _profile = AppUser(uid: _uid, displayName: 'You', timezone: 'Asia/Kolkata');
   }
 
+  RestLedger _loadRest() {
+    final raw = prefs.getString(_restKey);
+    if (raw != null) {
+      try {
+        return RestLedger.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        );
+      } catch (_) {
+        // A corrupt ledger starts fresh rather than blocking the app.
+      }
+    }
+    return RestLedger(startedAtMs: _clock().millisecondsSinceEpoch);
+  }
+
   String _newId(String prefix) =>
       '$prefix-${_clock().microsecondsSinceEpoch}-${_random.nextInt(1 << 32)}';
 
   Future<void> _save({bool notify = true}) async {
-    _updatePetState();
+    _settleRest();
     _trimHistory();
     await prefs.setString(
       _storageKey,
@@ -144,12 +192,12 @@ class LocalRepository implements Repository {
         'simplifyScheduleWhenIdle': _simplifyScheduleWhenIdle.toList(),
         'lastRolloverMs': _lastRolloverMs,
         'selectedMascot': _selectedMascot.wire,
-        'petCracked': _petCracked,
-        'burstCount': _burstCount,
-        'crackedAtMs': _crackedAtMs,
-        'burstEventsMs': _burstEventsMs,
+        'reaches': _reaches,
+        'targetSinceMs': _targetSinceMs,
+        'ladderHiddenUntilMs': _ladderHiddenUntilMs,
       }),
     );
+    await prefs.setString(_restKey, jsonEncode(_rest.toJson()));
     if (notify && !_changes.isClosed) _changes.add(null);
   }
 
@@ -158,13 +206,9 @@ class LocalRepository implements Repository {
   MascotId get selectedMascot => _selectedMascot.isPremium && !_profile.isPro
       ? MascotId.dot
       : _selectedMascot;
-  bool get petCracked => _petCracked;
-  int get burstCount => _burstCount;
-  int weeklyPetPenalty(DateTime monday) =>
-      _burstEventsMs
-          .where((stamp) => stamp >= monday.millisecondsSinceEpoch)
-          .length *
-      100;
+  RestLedger get rest => _rest;
+  int reachesFor(String attemptId) => _reaches[attemptId] ?? 0;
+  int targetSinceMs(String commitmentId) => _targetSinceMs[commitmentId] ?? 0;
 
   Future<void> setMascot(MascotId mascot) => _exclusive(() async {
     if (mascot.isPremium && !_profile.isPro) {
@@ -180,27 +224,84 @@ class LocalRepository implements Repository {
   Future<void> markSocialOutcomeSynced(String attemptId) =>
       prefs.setBool('social.outcome.$attemptId', true);
 
-  void _updatePetState() {
-    final misses = PetScoring.consecutiveMisses(_attempts);
-    if (!_petCracked && misses >= 3) {
-      _petCracked = true;
-      _burstCount++;
-      _crackedAtMs = _clock().millisecondsSinceEpoch;
-      _burstEventsMs.add(_crackedAtMs!);
-    }
-    if (_petCracked && _crackedAtMs != null) {
-      final recovered = _attempts.any(
-        (a) =>
-            a.state == AttemptState.completed &&
-            a.completedAt != null &&
-            a.completedAt!.millisecondsSinceEpoch > _crackedAtMs!,
+  /// Credits completions and lets saved rest days cover misses.
+  void _settleRest() {
+    if (!restDays) return;
+    final settlement = RestPolicy.settle(_rest, _attempts);
+    _rest = settlement.ledger;
+    if (settlement.cover.isEmpty) return;
+    _attempts = _attempts.map((attempt) {
+      final reason = settlement.cover[attempt.id];
+      if (reason == null) return attempt;
+      return _attemptWith(
+        attempt,
+        state: attempt.state,
+        endedReason: attempt.endedReason,
+        completedAt: attempt.completedAt,
+        evidence: {...?attempt.evidence, 'rest': reason},
       );
-      if (recovered) {
-        _petCracked = false;
-        _crackedAtMs = null;
+    }).toList();
+  }
+
+  /// Spends a saved rest day on [date] (yyyy-MM-dd). Attempts on that day end
+  /// as rest with no reminders. Returns false when none are saved.
+  Future<bool> planRest(String date) => _exclusive(() async {
+    if (!restDays) return false;
+    final planned = RestPolicy.plan(_rest, date);
+    if (planned == null) return false;
+    _rest = planned;
+    _restPlannedAttempts();
+    await _save();
+    return true;
+  });
+
+  List<String> get plannedRestDates => _rest.plannedDates.toList()..sort();
+
+  /// Ends pending attempts on planned rest dates. Returns whether any ended.
+  bool _restPlannedAttempts() {
+    if (!restDays || _rest.plannedDates.isEmpty) return false;
+    var changed = false;
+    _attempts = _attempts.map((attempt) {
+      if (attempt.state != AttemptState.pending ||
+          !_rest.plannedDates.contains(attempt.date)) {
+        return attempt;
+      }
+      changed = true;
+      return _attemptWith(
+        attempt,
+        state: AttemptState.abandoned,
+        endedReason: EndedReason.userEnded,
+        evidence: {'rest': 'planned'},
+      );
+    }).toList();
+    return changed;
+  }
+
+  /// Hides a right-size offer for a week.
+  Future<void> dismissLadder(String commitmentId) => _exclusive(() async {
+    _ladderHiddenUntilMs[commitmentId] = _clock()
+        .add(const Duration(days: 7))
+        .millisecondsSinceEpoch;
+    await _save();
+  });
+
+  bool ladderHidden(String commitmentId) =>
+      (_ladderHiddenUntilMs[commitmentId] ?? 0) >
+      _clock().millisecondsSinceEpoch;
+
+  /// Merges native reach counts. Counts only grow, so retries are safe.
+  Future<void> recordReaches(Map<String, int> counts) => _exclusive(() async {
+    var changed = false;
+    for (final entry in counts.entries) {
+      if (!_attempts.any((attempt) => attempt.id == entry.key)) continue;
+      final value = max(_reaches[entry.key] ?? 0, entry.value);
+      if (value != _reaches[entry.key]) {
+        _reaches[entry.key] = value;
+        changed = true;
       }
     }
-  }
+    if (changed) await _save();
+  });
 
   Future<bool> recordNativeExpiration(
     String attemptId,
@@ -233,6 +334,8 @@ class LocalRepository implements Repository {
               !attempt.windowEndAt.isBefore(cutoff),
         )
         .toList();
+    final ids = {for (final attempt in _attempts) attempt.id};
+    _reaches.removeWhere((id, _) => !ids.contains(id));
   }
 
   String _dateFor(DateTime instant, CommitmentSchedule schedule) {
@@ -362,6 +465,7 @@ class LocalRepository implements Repository {
       }
     }
     _lastRolloverMs = now.millisecondsSinceEpoch;
+    if (_restPlannedAttempts()) changed = true;
     return changed;
   }
 
@@ -424,6 +528,7 @@ class LocalRepository implements Repository {
       ..sort((a, b) => b.date.compareTo(a.date));
     var streak = 0;
     for (final attempt in finished) {
+      if (attempt.restCovered) continue;
       if (attempt.state == AttemptState.completed) {
         streak++;
       } else if (attempt.state.breaksStreak) {
@@ -483,6 +588,10 @@ class LocalRepository implements Repository {
     if (!_profile.isPro && commitment.schedule.hasCustomWindows) {
       throw StateError('Different times by day require ShowdUp Pro.');
     }
+    if (!_profile.isPro && verifierIsPro(commitment.verifierType)) {
+      throw StateError(proProofMessage);
+    }
+    _targetSinceMs[id] = _clock().millisecondsSinceEpoch;
     _commitments = [..._commitments, commitment];
     if (requestedStatus == CommitmentStatus.active) {
       _effectiveFromMs[id] = _clock().millisecondsSinceEpoch;
@@ -508,7 +617,11 @@ class LocalRepository implements Repository {
       final active = _commitments
           .where((commitment) => commitment.status == CommitmentStatus.active)
           .toList();
-      for (final commitment in active.skip(1)) {
+      // Keep the oldest alarm a free plan can run; location proofs are Pro.
+      final keep = active
+          .where((commitment) => !verifierIsPro(commitment.verifierType))
+          .firstOrNull;
+      for (final commitment in active.where((item) => item != keep)) {
         final hasPending = _attempts.any(
           (attempt) =>
               attempt.commitmentId == commitment.id &&
@@ -746,6 +859,17 @@ class LocalRepository implements Repository {
         'Free includes one active commitment. Upgrade to Pro for more.',
       );
     }
+    if (!_profile.isPro &&
+        updated.status == CommitmentStatus.active &&
+        verifierIsPro(updated.verifierType) &&
+        (old.status != CommitmentStatus.active ||
+            old.verifierType != updated.verifierType)) {
+      throw StateError(proProofMessage);
+    }
+    if (jsonEncode(updated.verifierConfig.toJson()) !=
+        jsonEncode(old.verifierConfig.toJson())) {
+      _targetSinceMs[id] = _clock().millisecondsSinceEpoch;
+    }
     _commitments = _commitments.map((c) => c.id == id ? updated : c).toList();
     if (updated.status != CommitmentStatus.active) {
       _attempts = _attempts
@@ -788,11 +912,12 @@ class LocalRepository implements Repository {
             timezone: _profile.timezone,
           );
           _selectedMascot = MascotId.dot;
-          _petCracked = false;
-          _burstCount = 0;
-          _crackedAtMs = null;
-          _burstEventsMs = [];
+          _reaches.clear();
+          _targetSinceMs.clear();
+          _ladderHiddenUntilMs.clear();
+          _rest = RestLedger(startedAtMs: _clock().millisecondsSinceEpoch);
           await prefs.remove(_storageKey);
+          await prefs.remove(_restKey);
           if (!_changes.isClosed) _changes.add(null);
           return {'ok': true};
         }
@@ -819,10 +944,18 @@ class LocalRepository implements Repository {
             );
             break;
           case 'endAttempt':
+            final spent = restDays && data['rest'] == true
+                ? RestPolicy.spend(_rest)
+                : null;
+            if (data['rest'] == true && spent == null) {
+              throw StateError('No rest days saved yet.');
+            }
+            if (spent != null) _rest = spent;
             replacement = _attemptWith(
               attempt,
               state: AttemptState.abandoned,
               endedReason: EndedReason.userEnded,
+              evidence: spent == null ? null : {'rest': 'ended'},
             );
             break;
           case 'reportVerifierFailure':
@@ -969,6 +1102,9 @@ class PreviewRepository implements Repository {
 
   @override
   Future<void> create(Map<String, dynamic> data) async {
+    if (verifierIsPro(VerifierType.from(data['verifierType'] as String))) {
+      throw StateError(proProofMessage);
+    }
     if (_commitments.any((c) => c.status == CommitmentStatus.active)) {
       throw StateError(
         'Free includes one active commitment. Pause your current commitment first.',

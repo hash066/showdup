@@ -178,15 +178,6 @@ class OverlayService : Service() {
   root = if (expanded) expandedView(snapshot) else pillView(snapshot)
   val p = params(expanded)
   try { wm.addView(root, p) } catch (_: Exception) { root = null; stopSelf() }
-  val burst = snapshot.optInt("burstCount", 0)
-  val animated = prefs(this).getInt("lastAnimatedBurst", 0)
-  if (!expanded && burst > animated) {
-   prefs(this).edit().putInt("lastAnimatedBurst", burst).apply()
-   root?.animate()?.rotationBy(540f)?.scaleX(2.4f)?.scaleY(2.4f)?.alpha(0f)?.setDuration(700)?.withEndAction {
-    root?.alpha = 1f; root?.rotation = 0f; root?.scaleX = 1f; root?.scaleY = 1f; render()
-   }?.start()
-   Toast.makeText(this, "Your pet cracked. Weekly score -100.", Toast.LENGTH_LONG).show()
-  }
  }
 
  private fun params(full: Boolean) = WindowManager.LayoutParams(

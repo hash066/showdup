@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import '../models/attempt.dart';
 import '../models/battle.dart';
 import '../models/pet.dart';
+import 'billing.dart';
 
 class SocialService {
   SocialService._();
@@ -142,6 +143,7 @@ class SocialService {
           'name': 'Weekly battle',
           'timezone': timezone,
           'mascot': mascot.wire,
+          'revenueCatAppUserId': ?Billing.appUserId,
         }))['battleId']
         as String;
   }
@@ -189,12 +191,12 @@ class SocialService {
     if (!available || !googleLinked || !attempt.state.isTerminal) return false;
     await _call('submitBattleOutcome', {
       'eventId': attempt.id,
-      'outcome': attempt.state.wire,
+      'outcome': attempt.restCovered ? 'rested' : attempt.state.wire,
       'snoozes': attempt.snoozes,
       'resolvedAt':
           (attempt.completedAt ?? attempt.windowEndAt).millisecondsSinceEpoch,
       'petMood': pet.mood.wire,
-      'burstCount': pet.burstCount,
+      'burstCount': 0,
       'mascot': pet.mascot.wire,
     });
     return true;

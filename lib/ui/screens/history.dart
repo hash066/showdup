@@ -65,7 +65,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         Text(
           rhythm.counted == 0
               ? 'Your first finished alarm starts it.'
-              : 'Showed up for ${rhythm.kept} of ${rhythm.counted} alarms. Phone trouble never counts against you.',
+              : 'Showed up for ${rhythm.kept} of ${rhythm.counted} alarms. Rest days and phone trouble never count against you.',
           style: ShowdType.bodyM,
         ),
         const SizedBox(height: ShowdSpace.s6),
@@ -218,8 +218,11 @@ class _DayGrid extends StatelessWidget {
       (a) => DateUtils.isSameDay(a.windowStartAt.toLocal(), day),
     );
     bool has(AttemptState state) => dayAttempts.any((a) => a.state == state);
+    final rested = dayAttempts.any((a) => a.restCovered);
     final (MarkState? mark, String label) = has(AttemptState.completed)
         ? (MarkState.showedUp, 'showed up')
+        : rested
+        ? (MarkState.rest, 'rest day')
         : has(AttemptState.expired) || has(AttemptState.abandoned)
         ? (MarkState.missed, 'missed')
         : has(AttemptState.unverifiable)

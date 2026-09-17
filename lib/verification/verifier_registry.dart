@@ -4,6 +4,7 @@ import 'focus_verifier.dart';
 import 'health_workout_verifier.dart';
 import 'leetcode_verifier.dart';
 import 'steps_verifier.dart';
+import 'tag_scan_verifier.dart';
 import 'walk_verifier.dart';
 import 'verifier.dart';
 
@@ -20,6 +21,7 @@ class VerifierRegistry {
             VerifierType.focus: FocusVerifier.new,
             VerifierType.healthWorkout: HealthWorkoutVerifier.new,
             VerifierType.leetcode: LeetCodeVerifier.new,
+            VerifierType.tagScan: TagScanVerifier.new,
           };
 
   final Map<VerifierType, Verifier Function()> _factories;

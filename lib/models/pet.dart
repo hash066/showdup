@@ -91,9 +91,11 @@ class PetSnapshot {
 class PetScoring {
   const PetScoring._();
 
+  /// Pending, "couldn't tell" and rest-covered attempts never score.
   static bool eligible(Attempt attempt) =>
       attempt.state != AttemptState.pending &&
-      attempt.state != AttemptState.unverifiable;
+      attempt.state != AttemptState.unverifiable &&
+      !attempt.restCovered;
 
   static int attemptPoints(Attempt attempt) {
     if (attempt.state != AttemptState.completed) return 0;
@@ -112,13 +114,8 @@ class PetScoring {
   }
 
   static int consecutiveMisses(Iterable<Attempt> attempts) {
-    final terminal =
-        attempts
-            .where(
-              (a) => a.state.isTerminal && a.state != AttemptState.unverifiable,
-            )
-            .toList()
-          ..sort((a, b) => b.windowEndAt.compareTo(a.windowEndAt));
+    final terminal = attempts.where(eligible).toList()
+      ..sort((a, b) => b.windowEndAt.compareTo(a.windowEndAt));
     var count = 0;
     for (final attempt in terminal) {
       if (attempt.state == AttemptState.completed) break;
@@ -130,13 +127,19 @@ class PetScoring {
     return count;
   }
 
+  /// Never punitive: a miss makes the companion determined, and the first
+  /// show-up after a miss is a comeback. `cracked` is never produced.
   static PetMood mood({
     required Iterable<Attempt> recentAttempts,
     required int currentSnoozes,
-    required bool cracked,
   }) {
-    if (cracked) return PetMood.cracked;
-    final eligibleAttempts = recentAttempts.where(eligible).toList();
+    final eligibleAttempts = recentAttempts.where(eligible).toList()
+      ..sort((a, b) => b.windowEndAt.compareTo(a.windowEndAt));
+    if (eligibleAttempts.length >= 2 &&
+        eligibleAttempts[0].state == AttemptState.completed &&
+        eligibleAttempts[1].state.breaksStreak) {
+      return PetMood.recovery;
+    }
     final ratio = eligibleAttempts.isEmpty
         ? 1.0
         : eligibleAttempts

@@ -18,6 +18,7 @@ class Rhythm {
     for (final attempt in attempts) {
       if (!attempt.state.isTerminal ||
           attempt.state == AttemptState.unverifiable ||
+          attempt.restCovered ||
           attempt.windowEndAt.isBefore(since)) {
         continue;
       }

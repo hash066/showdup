@@ -68,6 +68,7 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-functions")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("com.google.android.libraries.places:places:5.1.1")
     implementation("com.google.android.material:material:1.12.0")

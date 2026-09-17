@@ -11,7 +11,10 @@ import android.widget.TextView
 
 /** Plain, honest interruption screen; it never impersonates the blocked app. */
 class BlockerActivity : Activity() {
-    companion object { const val EXTRA_PACKAGE = "blocked_package" }
+    companion object {
+        const val EXTRA_PACKAGE = "blocked_package"
+        const val EXTRA_ATTEMPT = "attempt_id"
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = "ShowdUp focus block"
@@ -22,5 +25,9 @@ class BlockerActivity : Activity() {
         setContentView(column)
     }
 
-    override fun onResume() { super.onResume(); if (!AppBlocker.isEntitled(this) || !AppBlocker.isActive(this)) finish() }
+    override fun onResume() {
+        super.onResume()
+        val held = intent.getStringExtra(EXTRA_PACKAGE)
+        if (held == null || !AppBlocker.isBlocked(this, held)) finish()
+    }
 }

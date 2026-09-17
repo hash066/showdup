@@ -49,7 +49,7 @@ object AlarmEngine {
  private fun deadline(j: JSONObject): Long = AlarmSchedulePolicy.deadline(j.optLong("firstFiredAt", 0L), j.getLong("endEpochMs"))
  private fun configureBlocker(c: Context, j: JSONObject) {
   val restriction = j.optJSONObject("restrictions")
-  if (restriction?.optBoolean("enabled") == true && AppBlocker.isEntitled(c)) { val values = restriction.optJSONArray("packages") ?: JSONArray(); AppBlocker.configure(c, (0 until values.length()).map { values.getString(it) }, j.getLong("endEpochMs"), null, j.getString("attemptId"), j.getLong("startEpochMs")) }
+  if (restriction?.optBoolean("enabled") == true && AppBlocker.canHold(c)) { val values = restriction.optJSONArray("packages") ?: JSONArray(); AppBlocker.configure(c, (0 until values.length()).map { values.getString(it) }, j.getLong("endEpochMs"), null, j.getString("attemptId"), j.getLong("startEpochMs")) }
  }
  fun cancel(c: Context, id: String) {
   prefs(c).getString("alarm:$id", null)?.let { val j = JSONObject(it); for (i in 0 until min(6, j.optInt("maxReminders", 6))) c.getSystemService(AlarmManager::class.java).cancel(alarmIntent(c, id, i)) }
@@ -100,10 +100,33 @@ object AlarmEngine {
  fun restore(c: Context) {
   val list = JSONArray(prefs(c).getString("commitments", "[]")); val now = System.currentTimeMillis()
   for (i in 0 until list.length()) { val commitment = list.getJSONObject(i); val schedule = commitment.getJSONObject("schedule"); val reminder = commitment.getJSONObject("reminder"); val zone = ZoneId.of(schedule.getString("timezone")); val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate(); val days = schedule.getJSONArray("daysOfWeek")
-   for (d in 0..8) { val date = today.plusDays(d.toLong()); if ((0 until days.length()).none { days.getInt(it) == date.dayOfWeek.value }) continue; val custom = schedule.optJSONObject("dayWindows")?.optJSONObject(date.dayOfWeek.value.toString()); val startLocal = custom?.optString("startLocal")?.takeIf { it.isNotBlank() } ?: schedule.getString("windowStartLocal"); val endLocal = custom?.optString("endLocal")?.takeIf { it.isNotBlank() } ?: schedule.getString("windowEndLocal"); val start = date.atTime(LocalTime.parse(startLocal)).atZone(zone).toInstant().toEpochMilli(); val end = date.atTime(LocalTime.parse(endLocal)).atZone(zone).toInstant().toEpochMilli(); if (end <= now) continue; val id = "${commitment.getString("id")}_$date"; schedule(c, JSONObject().put("attemptId", id).put("startEpochMs", start).put("endEpochMs", end).put("intervalMinutes", reminder.getInt("intervalMinutes")).put("maxReminders", min(6, reminder.getInt("maxReminders"))).put("volumeMode", reminder.getString("volumeMode")).put("title", commitment.getString("title")).put("verifierType", commitment.getString("verifierType")).put("verifierConfig", commitment.getJSONObject("verifierConfig")).put("restrictions", commitment.optJSONObject("restrictions") ?: JSONObject())) }
+   val skip = commitment.optJSONArray("skipDates")?.let { values -> (0 until values.length()).map { values.getString(it) }.toSet() }.orEmpty()
+   for (d in 0..8) { val date = today.plusDays(d.toLong()); if ((0 until days.length()).none { days.getInt(it) == date.dayOfWeek.value }) continue; if (date.toString() in skip) { val restId = "${commitment.getString("id")}_$date"; if (prefs(c).contains("alarm:$restId")) cancel(c, restId); continue }; val custom = schedule.optJSONObject("dayWindows")?.optJSONObject(date.dayOfWeek.value.toString()); val startLocal = custom?.optString("startLocal")?.takeIf { it.isNotBlank() } ?: schedule.getString("windowStartLocal"); val endLocal = custom?.optString("endLocal")?.takeIf { it.isNotBlank() } ?: schedule.getString("windowEndLocal"); val start = date.atTime(LocalTime.parse(startLocal)).atZone(zone).toInstant().toEpochMilli(); val end = date.atTime(LocalTime.parse(endLocal)).atZone(zone).toInstant().toEpochMilli(); if (end <= now) continue; val id = "${commitment.getString("id")}_$date"; schedule(c, JSONObject().put("attemptId", id).put("startEpochMs", start).put("endEpochMs", end).put("intervalMinutes", reminder.getInt("intervalMinutes")).put("maxReminders", min(6, reminder.getInt("maxReminders"))).put("volumeMode", reminder.getString("volumeMode")).put("title", commitment.getString("title")).put("verifierType", commitment.getString("verifierType")).put("verifierConfig", commitment.getJSONObject("verifierConfig")).put("restrictions", commitment.optJSONObject("restrictions") ?: JSONObject())) }
   }
   val pi = PendingIntent.getBroadcast(c, 814, Intent(c, BootReceiver::class.java).setAction("showdup.maintenance"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE); c.getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, now + 86_400_000, pi)
   for ((k, v) in prefs(c).all) if (k.startsWith("alarm:")) { val id = k.removePrefix("alarm:"); val j = JSONObject(v as String); if (j.getLong("endEpochMs") <= now) expire(c, id, "window_ended") else if (j.optLong("nextAlarmAt", 0L) > 0L) scheduleAt(c, id, j.optInt("nextIndex", 0), max(now + 250, j.getLong("nextAlarmAt"))) else if(j.optInt("currentIndex",-1)>j.optInt("lastHandledIndex",-1))silence(c,id,true,"automatic") }
  }
+ /** One real reminder in [seconds], so people can hear what an alarm sounds like. */
+ fun scheduleTest(c: Context, seconds: Int): Boolean {
+  channels(c)
+  val at = System.currentTimeMillis() + seconds.coerceIn(3, 60) * 1000L
+  val pi = PendingIntent.getBroadcast(c, 9_413, Intent(c, AlarmReceiver::class.java).setAction(TEST_ACTION), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+  val am = c.getSystemService(AlarmManager::class.java)
+  val exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
+  if (exact) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi) else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+  return exact
+ }
+ const val TEST_ACTION = "showdup.test_alarm"
+ private const val TEST_ID = "showdup-test"
+ fun fireTest(c: Context) {
+  channels(c)
+  val open = PendingIntent.getActivity(c, TEST_ID.hashCode(), Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+  val n = NotificationCompat.Builder(c, "reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle("Test alarm").setContentText("This is how ShowdUp rings. It keeps coming back until you show up.").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM).setContentIntent(open).setFullScreenIntent(open, true).setAutoCancel(true).build()
+  c.getSystemService(NotificationManager::class.java).notify(TEST_ID.hashCode(), n)
+  ringingId?.let { if (it != TEST_ID) return }
+  ringtone = RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)); ringtone?.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(); ringtone?.play(); ringingId = TEST_ID
+  handler.postDelayed({ if (ringingId == TEST_ID) silence(c, TEST_ID, false, "test") }, 8_000)
+ }
+
  fun clear(c: Context) { for ((k, _) in prefs(c).all) if (k.startsWith("alarm:")) cancel(c, k.removePrefix("alarm:")); prefs(c).edit().clear().apply() }
 }

@@ -39,6 +39,7 @@ class Battle {
     required this.weekKey,
     required this.memberUids,
     required this.active,
+    this.capacity = 10,
   });
 
   final String id;
@@ -48,6 +49,9 @@ class Battle {
   final String weekKey;
   final List<String> memberUids;
   final bool active;
+
+  /// Seats: 4 when a free person made it, 10 with Pro.
+  final int capacity;
 
   factory Battle.fromJson(String id, Map<String, dynamic> data) => Battle(
     id: id,
@@ -59,6 +63,7 @@ class Battle {
         .whereType<String>()
         .toList(),
     active: data['active'] == true,
+    capacity: (data['capacity'] as num?)?.toInt() == 4 ? 4 : 10,
   );
 }
 

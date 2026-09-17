@@ -2,17 +2,45 @@ import {randomBytes} from 'node:crypto';
 import {initializeApp} from 'firebase-admin/app';
 import {getAuth} from 'firebase-admin/auth';
 import {FieldValue, getFirestore, Timestamp} from 'firebase-admin/firestore';
+import {defineSecret} from 'firebase-functions/params';
 import {HttpsError, onCall} from 'firebase-functions/v2/https';
 import {DateTime} from 'luxon';
 import {z} from 'zod';
-import {nextBattleScore} from './domain';
+import {
+  battleCapacity,
+  hasActivePro,
+  nextBattleScore,
+  storedCapacity,
+} from './domain';
 
 initializeApp();
 const db = getFirestore();
 const dayMs = 24 * 60 * 60 * 1000;
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const battleIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
-const mascotSchema = z.enum(['fox', 'cat', 'puppy', 'penguin', 'capybara']);
+const mascotSchema =
+  z.enum(['dot', 'fox', 'cat', 'puppy', 'penguin', 'capybara']);
+const revenueCatSecret = defineSecret('REVENUECAT_SECRET_KEY');
+
+/**
+ * Asks RevenueCat whether the app user has Pro. The client only names its
+ * anonymous RevenueCat id; the entitlement itself is read server-side. Any
+ * lookup failure falls back to the free capacity.
+ */
+async function isProSubscriber(appUserId: string | undefined): Promise<boolean> {
+  const key = revenueCatSecret.value();
+  if (!appUserId || !key) return false;
+  try {
+    const response = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(appUserId)}`,
+      {headers: {Authorization: `Bearer ${key}`}, signal: AbortSignal.timeout(5000)},
+    );
+    if (!response.ok) return false;
+    return hasActivePro(await response.json());
+  } catch {
+    return false;
+  }
+}
 
 // Capacity guardrails, not a monetary hard cap. Keeping minInstances at zero
 // prevents idle social services from accruing instance charges.
@@ -64,7 +92,7 @@ function requireRecentGoogleAuth(req: AuthRequest) {
   }
 }
 
-function identityFields(req: AuthRequest, mascot = 'fox') {
+function identityFields(req: AuthRequest, mascot = 'dot') {
   const displayName = String(req.auth?.token.name ?? 'Player')
     .trim().slice(0, 40) || 'Player';
   const photoUrl = typeof req.auth?.token.picture === 'string'
@@ -129,13 +157,18 @@ async function ensureBattleWeek(ref: FirebaseFirestore.DocumentReference) {
   });
 }
 
-export const createBattle = onCall(socialCall, async (req) => {
+export const createBattle = onCall({...socialCall, secrets: [revenueCatSecret]},
+  async (req) => {
   const userId = requireGoogle(req);
   const data = parse(z.object({
     name: z.string().trim().min(1).max(40),
     timezone: z.string().min(1).max(80),
     mascot: mascotSchema,
+    revenueCatAppUserId: z.string().regex(/^[A-Za-z0-9_$.:-]{1,100}$/)
+      .optional(),
   }).strict(), req.data);
+  const capacity = battleCapacity(
+    await isProSubscriber(data.revenueCatAppUserId));
   const week = weekKey(data.timezone);
   await rateLimit(userId, 'createBattle', 2);
 
@@ -160,6 +193,7 @@ export const createBattle = onCall(socialCall, async (req) => {
       timezone: data.timezone,
       weekKey: week,
       memberUids: [userId],
+      capacity,
       active: false,
       activatedAt: null,
       createdAt: FieldValue.serverTimestamp(),
@@ -198,9 +232,10 @@ export const createBattleInvite = onCall(socialCall, async (req) => {
   if (!battle.exists || !Array.isArray(members) || !members.includes(userId)) {
     throw new HttpsError('not-found', 'Battle not found.');
   }
-  if (members.length >= 10) {
+  const capacity = storedCapacity(battle.data()?.capacity);
+  if (members.length >= capacity) {
     throw new HttpsError('resource-exhausted',
-      'This battle already has 10 people.');
+      `This battle already has ${capacity} people.`);
   }
 
   const expiresAt = Date.now() + 7 * dayMs;
@@ -266,10 +301,11 @@ export const joinBattle = onCall(socialCall, async (req) => {
     if (members.includes(userId)) {
       return {battleId: battle.id, alreadyMember: true};
     }
-    if (members.length >= 10 ||
+    const capacity = storedCapacity(battle.data()!.capacity);
+    if (members.length >= capacity ||
         Number(invite.data()!.uses ?? 0) >= Number(invite.data()!.maxUses ?? 9)) {
       throw new HttpsError('resource-exhausted',
-        'This battle already has 10 people.');
+        `This battle already has ${capacity} people.`);
     }
 
     const nextMembers = [...members, userId];
@@ -283,7 +319,7 @@ export const joinBattle = onCall(socialCall, async (req) => {
     });
     tx.create(battleRef.collection('scores').doc(userId), {
       displayName: identity.displayName,
-      mascot: 'fox',
+      mascot: 'dot',
       petMood: 'happy',
       earned: 0,
       eligibleAttempts: 0,
@@ -341,7 +377,8 @@ export const submitBattleOutcome = onCall(socialCall, async (req) => {
   const userId = requireGoogle(req);
   const data = parse(z.object({
     eventId: id,
-    outcome: z.enum(['completed', 'expired', 'abandoned', 'unverifiable']),
+    outcome: z.enum(
+      ['completed', 'expired', 'abandoned', 'unverifiable', 'rested']),
     snoozes: z.number().int().min(0).max(20),
     resolvedAt: z.number().int().positive(),
     // Kept for wire compatibility; server state below never trusts these.
