@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import 'sensory.dart';
 import 'svg_path.dart';
 import 'tokens.dart';
 
@@ -147,7 +147,11 @@ class FlippingMark extends StatefulWidget {
     this.lineColor = ShowdColors.paper,
     this.dotColor = ShowdColors.accent,
     this.ringWhileWaiting = false,
+    this.cue = true,
   });
+
+  /// Plays the flip sound and haptic. Off when a louder cue covers it.
+  final bool cue;
 
   final bool showedUp;
   final double size;
@@ -188,7 +192,7 @@ class _FlippingMarkState extends State<FlippingMark>
         _flip.value = widget.showedUp ? 1 : 0;
       } else if (widget.showedUp) {
         _flip.forward();
-        HapticFeedback.mediumImpact();
+        if (widget.cue) Sensory.play(Cue.flip);
       } else {
         _flip.reverse();
       }

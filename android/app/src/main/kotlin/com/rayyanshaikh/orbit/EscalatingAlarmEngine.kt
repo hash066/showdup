@@ -13,6 +13,32 @@ import kotlin.math.min
 /** Persists and schedules exactly one reminder pulse per attempt. */
 object AlarmEngine {
  private var ringtone: Ringtone? = null
+
+ /** ShowdUp's own alarm tone unless the person chose the phone's, looping. */
+ private fun startTone(c: Context, alarm: Boolean) {
+  val brand = Sensory.alarmSound(c) == "showdup"
+  val uri = if (brand) android.net.Uri.parse("android.resource://${c.packageName}/${R.raw.alarm_showdup}") else RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+  ringtone = (RingtoneManager.getRingtone(c, uri) ?: RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)))?.apply {
+   audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build()
+   if (Build.VERSION.SDK_INT >= 28) isLooping = true
+   play()
+  }
+  if (alarm) startAlarmVibration(c)
+ }
+
+ /** A heartbeat pattern that repeats while the alarm rings. */
+ private fun startAlarmVibration(c: Context) {
+  val vibrator = if (Build.VERSION.SDK_INT >= 31) c.getSystemService(VibratorManager::class.java)?.defaultVibrator else @Suppress("DEPRECATION") c.getSystemService(Vibrator::class.java)
+  if (vibrator?.hasVibrator() != true) return
+  val effect = VibrationEffect.createWaveform(longArrayOf(0, 180, 120, 260, 900), intArrayOf(0, 200, 0, 255, 0), 0)
+  try { vibrator.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build()) } catch (_: Exception) {}
+ }
+
+ private fun stopTone(c: Context) {
+  ringtone?.stop(); ringtone = null
+  val vibrator = if (Build.VERSION.SDK_INT >= 31) c.getSystemService(VibratorManager::class.java)?.defaultVibrator else @Suppress("DEPRECATION") c.getSystemService(Vibrator::class.java)
+  try { vibrator?.cancel() } catch (_: Exception) {}
+ }
  private var originalVolume: Int? = null
  private var ringingId: String? = null
  private val handler = Handler(Looper.getMainLooper())
@@ -56,7 +82,7 @@ object AlarmEngine {
   prefs(c).edit().remove("alarm:$id").remove("verifier_error:$id").putBoolean("ended:$id", true).apply(); AppBlocker.stop(c, id); FocusTracker.stop(c,id,false); silence(c, id, false, "cancelled")
  }
  fun silence(c: Context, id: String, snooze: Boolean, source: String = "manual") {
-  if (ringingId == id) { ringtone?.stop(); ringtone = null; ringingId = null; originalVolume?.let { c.getSystemService(AudioManager::class.java).setStreamVolume(AudioManager.STREAM_ALARM, it, 0) }; originalVolume = null }
+  if (ringingId == id) { stopTone(c); ringingId = null; originalVolume?.let { c.getSystemService(AudioManager::class.java).setStreamVolume(AudioManager.STREAM_ALARM, it, 0) }; originalVolume = null }
   c.getSystemService(NotificationManager::class.java).cancel(id.hashCode()); if (!snooze) return
   val raw = prefs(c).getString("alarm:$id", null) ?: return; val j = JSONObject(raw); val current = j.optInt("currentIndex", -1)
   if (current < 0 || j.optInt("lastHandledIndex", -1) >= current) return
@@ -88,7 +114,7 @@ object AlarmEngine {
   val n = NotificationCompat.Builder(c, "reminders").setSmallIcon(R.drawable.ic_notification).setColor(Brand.accent).setContentTitle(j.optString("title", "Time to show up")).setContentText(body).setSubText("Snoozing costs 5 points").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM).setContentIntent(launch(c, id)).setFullScreenIntent(launch(c, id), true).setAutoCancel(true).addAction(0, "Snooze", snooze).build()
   c.getSystemService(NotificationManager::class.java).notify(id.hashCode(), n); ringingId?.let { silence(c, it, false, "replaced") }; ringingId = id
   if (j.optString("volumeMode") == "loud") { val audio = c.getSystemService(AudioManager::class.java); originalVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM); audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0) }
-  ringtone = RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)); ringtone?.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(); ringtone?.play(); handler.postDelayed({ if (ringingId == id) silence(c, id, true, "automatic") }, 30_000); event(c, id, "fired", index.toString())
+  startTone(c, alarm = true); handler.postDelayed({ if (ringingId == id) silence(c, id, true, "automatic") }, 30_000); event(c, id, "fired", index.toString())
   if (j.optString("verifierType") == "steps") try { val cfg = j.getJSONObject("verifierConfig"); if (!TrackingService.start(c, "steps", JSONObject().put("attemptId", id).put("targetSteps", cfg.getInt("targetSteps")).put("minDurationMs", cfg.getLong("minDurationMs")).put("untilEpochMs", j.getLong("endEpochMs")))) diagnostic(c, "tracking_start", "Android denied starting step verification from this reminder.") } catch (e: Exception) { diagnostic(c, "tracking_start", e.message ?: "Unable to start step verification.") }
   if (j.optString("verifierType") in setOf("location","walk")) try { val cfg=j.getJSONObject("verifierConfig");val data=JSONObject(cfg.toString()).put("attemptId",id).put("untilEpochMs",j.getLong("endEpochMs"));if(!TrackingService.start(c,j.getString("verifierType"),data))diagnostic(c,"tracking_start","Android denied starting location verification from this reminder.") } catch(e:Exception){diagnostic(c,"tracking_start",e.message?:"Unable to start location verification.")}
  }
@@ -126,7 +152,7 @@ object AlarmEngine {
   val n = NotificationCompat.Builder(c, "reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle("Test alarm").setContentText("This is how ShowdUp rings. It keeps coming back until you show up.").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM).setContentIntent(open).setFullScreenIntent(open, true).setAutoCancel(true).build()
   c.getSystemService(NotificationManager::class.java).notify(TEST_ID.hashCode(), n)
   ringingId?.let { if (it != TEST_ID) return }
-  ringtone = RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)); ringtone?.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(); ringtone?.play(); ringingId = TEST_ID
+  startTone(c, alarm = true); ringingId = TEST_ID
   handler.postDelayed({ if (ringingId == TEST_ID) silence(c, TEST_ID, false, "test") }, 8_000)
  }
 

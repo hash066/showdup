@@ -10,6 +10,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'core/config.dart';
+import 'design/sensory.dart';
 import 'ui/app.dart';
 
 Future<void> main() async {
@@ -52,6 +53,7 @@ Future<void> main() async {
     }
   }
   final prefs = await SharedPreferences.getInstance();
+  await Sensory.load();
   runApp(
     ProviderScope(
       child: ShowdUpApp(prefs: prefs, startupError: startupError),

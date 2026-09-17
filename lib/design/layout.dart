@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'icons.dart';
+import 'motion.dart';
+import 'sensory.dart';
 import 'tokens.dart';
 import 'type.dart';
 
@@ -53,12 +54,21 @@ class ShowdIconButton extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     button: true,
     label: semanticLabel,
-    child: InkResponse(
-      onTap: onPressed,
-      radius: 24,
-      child: SizedBox.square(
-        dimension: ShowdSpace.touch,
-        child: Center(child: ShowdIcon(icon, color: color)),
+    child: PressScale(
+      enabled: onPressed != null,
+      scale: 0.86,
+      child: InkResponse(
+        onTap: onPressed == null
+            ? null
+            : () {
+                Sensory.play(Cue.tap);
+                onPressed!();
+              },
+        radius: 24,
+        child: SizedBox.square(
+          dimension: ShowdSpace.touch,
+          child: Center(child: ShowdIcon(icon, color: color)),
+        ),
       ),
     ),
   );
@@ -85,6 +95,7 @@ class BigNumber extends StatelessWidget {
     this.color,
     this.align = Alignment.centerLeft,
     this.semanticLabel,
+    this.roll = true,
   });
 
   final String text;
@@ -93,6 +104,9 @@ class BigNumber extends StatelessWidget {
   final Alignment align;
   final String? semanticLabel;
 
+  /// Digits roll when the value changes.
+  final bool roll;
+
   @override
   Widget build(BuildContext context) => Semantics(
     label: semanticLabel,
@@ -100,11 +114,16 @@ class BigNumber extends StatelessWidget {
     child: FittedBox(
       fit: BoxFit.scaleDown,
       alignment: align,
-      child: Text(
-        text,
-        maxLines: 1,
-        style: color == null ? style : style.copyWith(color: color),
-      ),
+      child: roll
+          ? RollingText(
+              text,
+              style: color == null ? style : style.copyWith(color: color),
+            )
+          : Text(
+              text,
+              maxLines: 1,
+              style: color == null ? style : style.copyWith(color: color),
+            ),
     ),
   );
 }
@@ -134,7 +153,12 @@ class ShowdRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
+    onTap: onTap == null
+        ? null
+        : () {
+            Sensory.play(Cue.tap);
+            onTap!();
+          },
     child: Container(
       constraints: const BoxConstraints(minHeight: 64),
       decoration: hairline
@@ -235,14 +259,24 @@ class ProofBar extends StatelessWidget {
   final double progress;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    value: '${(progress.clamp(0, 1) * 100).round()} percent',
-    child: SizedBox(
-      height: 20,
-      width: double.infinity,
-      child: CustomPaint(painter: _ProofBarPainter(progress.clamp(0, 1))),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final target = progress.clamp(0.0, 1.0);
+    return Semantics(
+      value: '${(target * 100).round()} percent',
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(end: target),
+        duration: Motion.reduced(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 900),
+        curve: Curves.easeOutCubic,
+        builder: (context, value, _) => SizedBox(
+          height: 20,
+          width: double.infinity,
+          child: CustomPaint(painter: _ProofBarPainter(value)),
+        ),
+      ),
+    );
+  }
 }
 
 class _ProofBarPainter extends CustomPainter {
@@ -304,7 +338,7 @@ class ChoiceRow extends StatelessWidget {
     excludeSemantics: true,
     child: InkWell(
       onTap: () {
-        HapticFeedback.selectionClick();
+        Sensory.play(Cue.select);
         onTap();
       },
       child: Container(
@@ -408,7 +442,9 @@ class DayPicker extends StatelessWidget {
           excludeSemantics: true,
           child: InkResponse(
             onTap: () {
-              HapticFeedback.selectionClick();
+              Sensory.play(
+                selected.contains(day) ? Cue.toggleOff : Cue.toggleOn,
+              );
               onToggle(day);
             },
             radius: 24,
@@ -463,5 +499,52 @@ class LetterAvatar extends StatelessWidget {
         style: ShowdType.titleM.copyWith(fontSize: size * .42),
       ),
     ),
+  );
+}
+
+/// A slider that ticks under the thumb at every step.
+class TickSlider extends StatelessWidget {
+  const TickSlider({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.min = 0,
+    this.max = 1,
+    this.divisions,
+    this.label,
+  });
+
+  final double value;
+  final double min;
+  final double max;
+  final int? divisions;
+  final String? label;
+  final ValueChanged<double>? onChanged;
+
+  int _bucket(double v) {
+    final steps = divisions ?? 20;
+    return ((v - min) / (max - min) * steps).round();
+  }
+
+  @override
+  Widget build(BuildContext context) => Slider(
+    value: value,
+    min: min,
+    max: max,
+    divisions: divisions,
+    label: label,
+    onChangeStart: (_) => Sensory.play(Cue.select, sound: false),
+    onChanged: onChanged == null
+        ? null
+        : (v) {
+            if (_bucket(v) != _bucket(value)) {
+              Sensory.play(
+                Cue.holdTick,
+                intensity: (v - min) / (max - min),
+                sound: false,
+              );
+            }
+            onChanged!(v);
+          },
   );
 }

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../design/sensory.dart';
+import '../../design/motion.dart';
 import '../../design/buttons.dart';
 import '../../design/icons.dart';
 import '../../design/layout.dart';
@@ -55,17 +57,23 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         ShowdSpace.s8,
       ),
       children: [
-        const SectionLabel('Rhythm · last 4 weeks'),
-        BigNumber(
-          rhythm.percent == null ? '–' : '${rhythm.percent}%',
-          semanticLabel: rhythm.percent == null
-              ? 'No rhythm yet'
-              : 'Rhythm ${rhythm.percent} percent',
-        ),
+        const SectionLabel('Rhythm · 4 weeks'),
+        if (rhythm.percent == null)
+          const BigNumber('–', semanticLabel: 'No rhythm yet')
+        else
+          Semantics(
+            label: 'Rhythm ${rhythm.percent} percent',
+            excludeSemantics: true,
+            child: CountUp(
+              value: rhythm.percent!,
+              format: (v) => '${v.round()}%',
+              style: ShowdType.numeralXL,
+            ),
+          ),
         Text(
           rhythm.counted == 0
-              ? 'Your first finished alarm starts it.'
-              : 'Showed up for ${rhythm.kept} of ${rhythm.counted} alarms. Rest days and phone trouble never count against you.',
+              ? 'Starts with your first alarm'
+              : '${rhythm.kept} of ${rhythm.counted} alarms',
           style: ShowdType.bodyM,
         ),
         const SizedBox(height: ShowdSpace.s6),
@@ -96,7 +104,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                   child: ChoiceChip(
                     label: Text(label),
                     selected: filter == value,
-                    onSelected: (_) => setState(() => filter = value),
+                    onSelected: (_) {
+                      Sensory.play(Cue.select);
+                      setState(() => filter = value);
+                    },
                   ),
                 ),
             ],
@@ -104,20 +115,20 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         ),
         const SizedBox(height: ShowdSpace.s3),
         if (visible.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: ShowdSpace.s6),
-            child: Text(
-              'Nothing here yet. Every alarm you finish lands here.',
-              style: ShowdType.bodyM,
-            ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: ShowdSpace.s8),
+            child: Center(child: ShowdMark(state: MarkState.rest, size: 72)),
           ),
-        for (final a in visible)
+        ...staggered([
+          for (final a in visible.take(40))
+            AttemptRow(a, app.commitment(a.commitmentId)?.title ?? 'Alarm'),
+        ], step: const Duration(milliseconds: 35)),
+        for (final a in visible.skip(40))
           AttemptRow(a, app.commitment(a.commitmentId)?.title ?? 'Alarm'),
         if (!isPro && (hidden || visible.isNotEmpty))
           ShowdRow(
             leading: const ShowdIcon(ShowdIcons.history),
             title: 'Older than 30 days',
-            subtitle: 'Pro keeps two years.',
             trailing: const ProPill(),
             onTap: () => openPro(context),
           ),
@@ -203,11 +214,14 @@ class _DayGrid extends StatelessWidget {
     return Column(
       children: [
         for (var week = 0; week < 4; week++)
-          Row(
-            children: [
-              for (final day in days.skip(week * 7).take(7))
-                Expanded(child: _cell(day, DateUtils.isSameDay(day, today))),
-            ],
+          Reveal(
+            delay: Duration(milliseconds: 150 + week * 70),
+            child: Row(
+              children: [
+                for (final day in days.skip(week * 7).take(7))
+                  Expanded(child: _cell(day, DateUtils.isSameDay(day, today))),
+              ],
+            ),
           ),
       ],
     );

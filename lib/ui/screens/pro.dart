@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/features.dart';
+import '../../design/motion.dart';
 import '../../design/buttons.dart';
 import '../../design/icons.dart';
 import '../../design/layout.dart';
@@ -64,7 +64,9 @@ class _ProScreenState extends ConsumerState<ProScreen> {
                   ShowdSpace.s6,
                 ),
                 children: [
-                  const ShowdMark(state: MarkState.showedUp, size: 56),
+                  const Breathe(
+                    child: ShowdMark(state: MarkState.showedUp, size: 72),
+                  ),
                   const SizedBox(height: ShowdSpace.s6),
                   Text('More room\nto show up.', style: ShowdType.hero),
                   const SizedBox(height: ShowdSpace.s3),
@@ -78,43 +80,23 @@ class _ProScreenState extends ConsumerState<ProScreen> {
                     style: ShowdType.caption,
                   ),
                   const SizedBox(height: ShowdSpace.s6),
-                  for (final (title, body) in [
-                    ('Up to 20 proof alarms', 'Free keeps one on at a time.'),
-                    (
-                      'Gym, places and GPS walks',
-                      'Checks you in when you arrive.',
-                    ),
-                    if (Features.catchEnabled)
-                      ('Catch more than one app', 'Free catches one.')
-                    else
-                      (
-                        'Hold your distracting apps',
-                        'They stay covered until proof.',
+                  ...staggered([
+                    for (final (icon, title) in [
+                      (ShowdIcons.alarm, '20 proof alarms'),
+                      (ShowdIcons.gym, 'Gym, places, GPS walks'),
+                      (ShowdIcons.caught, 'Hold every app'),
+                      (ShowdIcons.calendar, 'A time for each day'),
+                      (ShowdIcons.history, 'Two years of history'),
+                      (ShowdIcons.companion, 'Animal companions'),
+                      (ShowdIcons.battle, 'Battles of 10'),
+                    ])
+                      ShowdRow(
+                        leading: ShowdIcon(icon, color: ShowdColors.accent),
+                        title: title,
                       ),
-                    ('A different time each day', 'Mondays can start later.'),
-                    (
-                      'Two years of history',
-                      'With patterns and a buddy check-in.',
-                    ),
-                    (
-                      'Animal companions',
-                      'Fox, cat, pup, penguin and capybara.',
-                    ),
-                    ('Bigger battles', 'Up to 10 people.'),
-                  ])
-                    ShowdRow(
-                      leading: const ShowdIcon(
-                        ShowdIcons.check,
-                        color: ShowdColors.accent,
-                      ),
-                      title: title,
-                      subtitle: body,
-                    ),
+                  ], start: const Duration(milliseconds: 200)),
                   const SizedBox(height: ShowdSpace.s4),
-                  Text(
-                    'Proof, snooze and ending today stay free.',
-                    style: ShowdType.bodyM,
-                  ),
+
                   const SizedBox(height: ShowdSpace.s4),
                   if (message != null) ShowdNotice(message!),
                 ],

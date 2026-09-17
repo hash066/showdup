@@ -9,6 +9,8 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../design/motion.dart';
+import '../../design/sensory.dart';
 import '../../design/buttons.dart';
 import '../../design/chrome.dart';
 import '../../design/icons.dart';
@@ -24,6 +26,7 @@ import '../../platform/blocker_channel.dart';
 import '../../services/controller.dart';
 import '../app_provider.dart';
 import '../keys.dart';
+import 'alarms.dart' show InfoTag;
 import 'common.dart';
 import 'permissions.dart';
 
@@ -38,6 +41,9 @@ class AttemptScreen extends ConsumerStatefulWidget {
 class _AttemptScreenState extends ConsumerState<AttemptScreen> {
   bool busy = false;
   bool released = false;
+
+  /// Last quarter of progress felt, so each quarter ticks once.
+  int _quarter = 0;
   final cardKey = GlobalKey();
   String? localError;
 
@@ -129,12 +135,14 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
     final a = matches.first;
     final c = app.commitment(a.commitmentId);
     if (c == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: ShowdLoader()));
     }
     if (a.state == AttemptState.completed) {
       if (!released) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => released = true);
+          if (!mounted) return;
+          Sensory.play(Cue.release);
+          setState(() => released = true);
         });
       }
       _loadAppNames(c);
@@ -149,16 +157,19 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
     final failure = app.failures[a.id];
     final tracking = app.progress.containsKey(a.id);
     final progress = app.progress[a.id] ?? (app.preview ? .64 : 0.0);
+    final quarter = (progress * 4).floor();
+    if (tracking && quarter > _quarter) {
+      Sensory.play(Cue.holdTick, intensity: quarter / 4);
+    }
+    _quarter = quarter;
     final number = proofNumber(c, progress);
-    final snoozeCost = a.snoozes < 8;
+    final tag = c.verifierConfig is TagScanConfig;
+    final zone = c.schedule.timezone;
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
             PushedHeader(
-              title: open
-                  ? 'Open now'
-                  : 'Opens at ${zoneClock(a.windowStartAt, c.schedule.timezone)}',
               trailing: ShowdIconButton(
                 icon: ShowdIcons.info,
                 semanticLabel: 'How it’s proven',
@@ -167,84 +178,95 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(
-                  ShowdSpace.gutter,
-                  ShowdSpace.s4,
-                  ShowdSpace.gutter,
-                  ShowdSpace.s6,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: ShowdSpace.gutter,
                 ),
-                children: [
-                  Text(c.title, style: ShowdType.titleXL),
+                children: staggered([
                   const SizedBox(height: ShowdSpace.s2),
-                  Text(goalDescription(c), style: ShowdType.bodyM),
+                  Center(
+                    child: tracking
+                        ? const Breathe(
+                            amount: 0.07,
+                            child: ShowdMark(
+                              state: MarkState.showedUp,
+                              size: 112,
+                            ),
+                          )
+                        : RingingMark(size: 112, ringing: open),
+                  ),
+                  const SizedBox(height: ShowdSpace.s4),
+                  Text(
+                    c.title,
+                    textAlign: TextAlign.center,
+                    style: ShowdType.titleL,
+                  ),
+                  const SizedBox(height: ShowdSpace.s6),
+                  BigNumber(
+                    number.value,
+                    align: Alignment.center,
+                    color: progress > 0
+                        ? ShowdColors.accent
+                        : ShowdColors.paper,
+                    semanticLabel: '${number.value} ${number.unit}',
+                  ),
+                  Text(
+                    number.unit,
+                    textAlign: TextAlign.center,
+                    style: ShowdType.label,
+                  ),
+                  const SizedBox(height: ShowdSpace.s4),
+                  ProofBar(progress: progress),
+                  const SizedBox(height: ShowdSpace.s4),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: ShowdSpace.s2,
+                    runSpacing: ShowdSpace.s2,
+                    children: [
+                      InfoTag(
+                        tracking ? ShowdIcons.steps : ShowdIcons.alarm,
+                        tracking
+                            ? 'Counting'
+                            : open
+                            ? 'Until ${zoneClock(a.windowEndAt, zone)}'
+                            : 'Opens ${zoneClock(a.windowStartAt, zone)}',
+                        accent: open,
+                      ),
+                      if (c.verifierType == VerifierType.leetcode)
+                        const InfoTag(ShowdIcons.code, 'Beta'),
+                      if (app.preview)
+                        const InfoTag(ShowdIcons.info, 'Preview'),
+                    ],
+                  ),
                   if (c.reason?.isNotEmpty == true) ...[
-                    const SizedBox(height: ShowdSpace.s3),
+                    const SizedBox(height: ShowdSpace.s6),
                     Text(
                       '“${c.reason}”',
+                      textAlign: TextAlign.center,
                       style: ShowdType.bodyL.copyWith(
                         color: ShowdColors.paper,
                         fontStyle: FontStyle.italic,
                       ),
                     ),
                   ],
-                  if (c.verifierType == VerifierType.leetcode) ...[
-                    const SizedBox(height: ShowdSpace.s2),
-                    Text(
-                      'Beta · if LeetCode can’t be reached, it won’t count as a miss.',
-                      style: ShowdType.caption,
-                    ),
-                  ],
-                  const SizedBox(height: ShowdSpace.s8),
-                  BigNumber(
-                    number.value,
-                    color: progress > 0
-                        ? ShowdColors.accent
-                        : ShowdColors.paper,
-                    semanticLabel: '${number.value} ${number.unit}',
-                  ),
-                  Text(number.unit, style: ShowdType.label),
-                  const SizedBox(height: ShowdSpace.s4),
-                  ProofBar(progress: progress),
-                  const SizedBox(height: ShowdSpace.s4),
-                  Text(
-                    !open
-                        ? 'Reminders start when the window opens.'
-                        : tracking
-                        ? 'Pocket the phone. It’s counting.'
-                        : 'Start, then pocket the phone.',
-                    style: ShowdType.bodyM,
-                  ),
-                  if (app.preview) ...[
-                    const SizedBox(height: ShowdSpace.s2),
-                    Text(
-                      'Preview · not a verified result',
-                      style: ShowdType.caption.copyWith(
-                        color: ShowdColors.accent,
-                      ),
-                    ),
-                  ],
                   const SizedBox(height: ShowdSpace.s6),
                   if (localError != null) ShowdNotice(localError!),
                   if (failure != null) ...[
-                    ShowdNotice('Couldn’t check this yet. $failure'),
+                    ShowdNotice(failure, icon: ShowdIcons.info),
                     ShowdRow(
                       leading: const ShowdIcon(ShowdIcons.bell),
                       title: 'Check permissions',
-                      onTap: () => Navigator.push(
+                      onTap: () => pushShowd<void>(
                         context,
-                        MaterialPageRoute<void>(
-                          builder: (_) => const PermissionsScreen(),
-                        ),
+                        (_) => const PermissionsScreen(),
                       ),
                     ),
                     ShowdRow(
                       leading: const ShowdIcon(ShowdIcons.info),
-                      title: 'My phone can’t check this today',
-                      subtitle: 'No points, and your streak stays.',
+                      title: 'Phone can’t check today',
                       onTap: busy ? null : () => run(() => app.unable(a)),
                     ),
                   ],
-                ],
+                ]),
               ),
             ),
             Padding(
@@ -258,36 +280,48 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 children: [
                   if (open) ...[
                     ShowdButton(
-                      label: c.verifierConfig is TagScanConfig
+                      label: tag
                           ? 'Scan my tag'
                           : tracking
-                          ? 'Keep proving'
-                          : 'Start proving',
-                      icon: c.verifierConfig is TagScanConfig
-                          ? ShowdIcons.tagScan
-                          : null,
+                          ? 'Keep going'
+                          : 'Start',
+                      icon: tag ? ShowdIcons.tagScan : ShowdIcons.check,
                       busy: busy,
+                      cue: Cue.toggleOn,
                       onPressed: () => run(() => app.start(a)),
                     ),
                     const SizedBox(height: ShowdSpace.s3),
                   ],
-                  HoldToConfirmButton(
-                    key: ShowdKeys.endToday,
-                    label: 'Hold to end today',
-                    enabled: !busy,
-                    onConfirmed: () => _endToday(app, a),
+                  Row(
+                    children: [
+                      if (open) ...[
+                        Expanded(
+                          child: ShowdButton(
+                            label: a.snoozes < 8 ? 'Snooze −5' : 'Snooze',
+                            icon: ShowdIcons.snooze,
+                            tone: ShowdButtonTone.outline,
+                            cue: Cue.toggleOff,
+                            onPressed: busy
+                                ? null
+                                : () => run(() => app.snooze(a)),
+                          ),
+                        ),
+                        const SizedBox(width: ShowdSpace.s3),
+                      ],
+                      Expanded(
+                        flex: open ? 1 : 2,
+                        child: HoldToConfirmButton(
+                          key: ShowdKeys.endToday,
+                          label: 'Hold to end',
+                          enabled: !busy,
+                          onConfirmed: () => _endToday(app, a),
+                        ),
+                      ),
+                    ],
                   ),
-                  if (open)
-                    ShowdButton(
-                      label: snoozeCost
-                          ? 'Snooze this reminder · −5 points'
-                          : 'Snooze this reminder',
-                      tone: ShowdButtonTone.quiet,
-                      onPressed: busy ? null : () => run(() => app.snooze(a)),
-                    ),
                   if (app.preview)
                     ShowdButton(
-                      label: 'Preview the Released screen',
+                      label: 'Preview showing up',
                       tone: ShowdButtonTone.quiet,
                       onPressed: () => run(
                         () => app.repository.call('previewComplete', {
@@ -311,44 +345,37 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
         children: [
           const PushedHeader(),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShowdSpace.gutter,
-              ),
-              children: [
-                const SizedBox(height: ShowdSpace.s12),
-                Center(child: ShowdMark(state: attemptMark(a), size: 96)),
-                const SizedBox(height: ShowdSpace.s8),
-                Text(
-                  key: ShowdKeys.attemptOutcome(a.state),
-                  switch (a.state) {
-                    _ when a.restCovered => 'Rest day.\nRhythm kept.',
-                    AttemptState.abandoned =>
-                      'Ended today.\nNo points, no guilt.',
-                    AttemptState.expired => 'Missed today.\nNever miss twice.',
-                    _ =>
-                      'Your phone couldn’t tell.\nNot on you. Your streak is safe.',
-                  },
-                  textAlign: TextAlign.center,
-                  style: ShowdType.titleXL,
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: ShowdSpace.gutter,
                 ),
-                const SizedBox(height: ShowdSpace.s4),
-                Text(
-                  '${c.title} · ${DateFormat('EEE d MMM').format(DateTime.parse(a.date))}',
-                  textAlign: TextAlign.center,
-                  style: ShowdType.bodyM,
-                ),
-                if (app.preview) ...[
-                  const SizedBox(height: ShowdSpace.s2),
-                  Text(
-                    'Preview · not a verified result',
-                    textAlign: TextAlign.center,
-                    style: ShowdType.caption.copyWith(
-                      color: ShowdColors.accent,
+                child: Column(
+                  children: staggered([
+                    Breathe(child: ShowdMark(state: attemptMark(a), size: 140)),
+                    const SizedBox(height: ShowdSpace.s8),
+                    Text(
+                      key: ShowdKeys.attemptOutcome(a.state),
+                      switch (a.state) {
+                        _ when a.restCovered => 'Rest day.\nRhythm kept.',
+                        AttemptState.abandoned => 'Ended today.\nNo guilt.',
+                        AttemptState.expired =>
+                          'Missed today.\nNever miss twice.',
+                        _ => 'Phone couldn’t tell.\nYour streak is safe.',
+                      },
+                      textAlign: TextAlign.center,
+                      style: ShowdType.hero,
                     ),
-                  ),
-                ],
-              ],
+                    const SizedBox(height: ShowdSpace.s4),
+                    Center(
+                      child: InfoTag(
+                        kindIcon(c.kind),
+                        DateFormat('EEE d MMM').format(DateTime.parse(a.date)),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
             ),
           ),
           Padding(
@@ -365,8 +392,6 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
 
   Widget _released(AppController app, Attempt a, Commitment c) {
     const ink = ShowdColors.ink;
-    final soft = ink.withValues(alpha: .72);
-    final source = a.evidence?['sourceLabel'] ?? a.evidence?['source'];
     final reaches = app.reachesFor(a.id);
     final held = c.restrictions.enabled && c.restrictions.packages.isNotEmpty
         ? c.restrictions.packages.first
@@ -400,68 +425,80 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 ),
               ),
               Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: ShowdSpace.gutter,
-                  ),
-                  child: RepaintBoundary(
-                    key: cardKey,
-                    child: Container(
-                      color: ShowdColors.accent,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: ShowdSpace.s8,
-                      ),
-                      child: Column(
-                        children: [
-                          FlippingMark(
-                            showedUp: released,
-                            size: 150,
-                            lineColor: ink,
-                            dotColor: ink,
-                          ),
-                          const SizedBox(height: ShowdSpace.s8),
-                          Text(
-                            key: ShowdKeys.attemptOutcome(a.state),
-                            'Showed up.',
-                            textAlign: TextAlign.center,
-                            style: ShowdType.hero.copyWith(color: ink),
-                          ),
-                          const SizedBox(height: ShowdSpace.s3),
-                          Text(
-                            c.title,
-                            textAlign: TextAlign.center,
-                            style: ShowdType.titleM.copyWith(color: ink),
-                          ),
-                          const SizedBox(height: ShowdSpace.s2),
-                          Text(
-                            [
-                              DateFormat(
-                                'EEE d MMM',
-                              ).format(DateTime.parse(a.date)),
-                              if (a.completedAt != null) hhmm(a.completedAt!),
-                              if (source != null) 'checked by $source',
-                            ].join(' · '),
-                            textAlign: TextAlign.center,
-                            style: ShowdType.bodyM.copyWith(color: soft),
-                          ),
-                          if (reaches > 0) ...[
-                            const SizedBox(height: ShowdSpace.s4),
-                            Text(
-                              'You reached for ${heldName ?? 'it'} $reaches time${reaches == 1 ? '' : 's'} and still showed up.',
-                              textAlign: TextAlign.center,
-                              style: ShowdType.bodyL.copyWith(color: ink),
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: ShowdSpace.gutter,
+                    ),
+                    child: RepaintBoundary(
+                      key: cardKey,
+                      child: Container(
+                        color: ShowdColors.accent,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: ShowdSpace.s8,
+                        ),
+                        child: Column(
+                          children: [
+                            SizedBox(
+                              width: 300,
+                              height: 220,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  DotBurst(
+                                    play: released,
+                                    color: ink,
+                                    size: 300,
+                                  ),
+                                  FlippingMark(
+                                    showedUp: released,
+                                    cue: false,
+                                    size: 160,
+                                    lineColor: ink,
+                                    dotColor: ink,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ],
-                          if (app.preview) ...[
+                            const SizedBox(height: ShowdSpace.s6),
+                            Text(
+                              key: ShowdKeys.attemptOutcome(a.state),
+                              'Showed up.',
+                              textAlign: TextAlign.center,
+                              style: ShowdType.hero.copyWith(
+                                color: ink,
+                                fontSize: 52,
+                              ),
+                            ),
                             const SizedBox(height: ShowdSpace.s2),
                             Text(
-                              'Preview · not a verified result',
-                              style: ShowdType.caption.copyWith(color: ink),
+                              c.title,
+                              textAlign: TextAlign.center,
+                              style: ShowdType.titleM.copyWith(color: ink),
                             ),
+                            if (reaches > 0) ...[
+                              const SizedBox(height: ShowdSpace.s6),
+                              CountUp(
+                                value: reaches,
+                                format: (v) => '${v.round()}×',
+                                style: ShowdType.numeralM.copyWith(color: ink),
+                              ),
+                              Text(
+                                'reached for ${heldName ?? 'it'}, still showed up',
+                                style: ShowdType.bodyM.copyWith(color: ink),
+                              ),
+                            ],
+                            if (app.preview) ...[
+                              const SizedBox(height: ShowdSpace.s3),
+                              Text(
+                                'Preview',
+                                style: ShowdType.caption.copyWith(color: ink),
+                              ),
+                            ],
+                            const SizedBox(height: ShowdSpace.s8),
+                            const Wordmark(size: 20, color: ink, dotColor: ink),
                           ],
-                          const SizedBox(height: ShowdSpace.s8),
-                          Wordmark(size: 22, color: ink, dotColor: ink),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -479,8 +516,7 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                     if (localError != null) ShowdNotice(localError!),
                     if (offer != null && offer.up) ...[
                       _LadderCard(
-                        text:
-                            'Six of your last seven. Ready for ${offer.change}?',
+                        text: 'Six of seven. Try ${offer.change}?',
                         accept: 'Make it ${offer.change}',
                         onAccept: () => run(() => app.acceptLadder(offer)),
                         onDismiss: () => app.dismissLadder(c.id),
@@ -500,22 +536,13 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                       const SizedBox(height: ShowdSpace.s2),
                     ],
                     ShowdButton(
-                      label: 'Share proof',
+                      label: 'Share',
                       icon: ShowdIcons.share,
                       tone: held == null
                           ? ShowdButtonTone.onAccent
                           : ShowdButtonTone.quiet,
                       busy: busy,
                       onPressed: () => run(() => _share(c, a, app.preview)),
-                    ),
-                    const SizedBox(height: ShowdSpace.s2),
-                    TextButton(
-                      style: TextButton.styleFrom(
-                        foregroundColor: ink,
-                        minimumSize: const Size.fromHeight(48),
-                      ),
-                      onPressed: () => Navigator.maybePop(context),
-                      child: const Text('Done'),
                     ),
                   ],
                 ),

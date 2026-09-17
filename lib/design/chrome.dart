@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'icons.dart';
 import 'mark.dart';
+import 'sensory.dart';
 import 'tokens.dart';
 import 'type.dart';
 
@@ -56,18 +56,23 @@ class ShowdNavBar extends StatelessWidget {
                       excludeSemantics: true,
                       child: InkResponse(
                         onTap: () {
-                          if (i != index) HapticFeedback.selectionClick();
+                          if (i != index) Sensory.play(Cue.page);
                           onSelect(i);
                         },
                         radius: 40,
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            ShowdIcon(
-                              item.icon,
-                              color: i == index
-                                  ? ShowdColors.accent
-                                  : ShowdColors.stone,
+                            AnimatedScale(
+                              scale: i == index ? 1.12 : 1,
+                              duration: const Duration(milliseconds: 360),
+                              curve: Curves.elasticOut,
+                              child: ShowdIcon(
+                                item.icon,
+                                color: i == index
+                                    ? ShowdColors.accent
+                                    : ShowdColors.stone,
+                              ),
                             ),
                             const SizedBox(height: 4),
                             Text(
@@ -143,21 +148,27 @@ class Wordmark extends StatelessWidget {
 Future<T?> showShowdSheet<T>(
   BuildContext context, {
   required WidgetBuilder builder,
-}) => showModalBottomSheet<T>(
-  context: context,
-  isScrollControlled: true,
-  useSafeArea: true,
-  showDragHandle: true,
-  builder: (sheetContext) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      ShowdSpace.gutter,
-      0,
-      ShowdSpace.gutter,
-      ShowdSpace.s6 + MediaQuery.viewInsetsOf(sheetContext).bottom,
-    ),
-    child: SingleChildScrollView(child: builder(sheetContext)),
-  ),
-);
+}) {
+  Sensory.play(Cue.page);
+  return _sheet<T>(context, builder: builder);
+}
+
+Future<T?> _sheet<T>(BuildContext context, {required WidgetBuilder builder}) =>
+    showModalBottomSheet<T>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          ShowdSpace.gutter,
+          0,
+          ShowdSpace.gutter,
+          ShowdSpace.s6 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+        ),
+        child: SingleChildScrollView(child: builder(sheetContext)),
+      ),
+    );
 
 /// A thin segmented progress line for multi-step flows.
 class StepLine extends StatelessWidget {

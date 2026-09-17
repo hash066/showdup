@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
 
+import '../../design/motion.dart';
 import '../../design/buttons.dart';
 import '../../design/chrome.dart';
 import '../../design/icons.dart';
@@ -13,6 +14,7 @@ import '../../models/attempt.dart';
 import '../../models/commitment.dart';
 import '../../models/enums.dart';
 import '../../models/verifier_config.dart';
+import '../../platform/alarm_channel.dart';
 import '../../services/billing.dart';
 import '../../services/controller.dart';
 import '../../services/repository.dart' show proProofMessage;
@@ -23,14 +25,12 @@ import 'pro.dart';
 void openWizard(BuildContext context, {Commitment? commitment}) =>
     Navigator.push(
       context,
-      MaterialPageRoute<void>(
-        builder: (_) => CommitmentWizard(existing: commitment),
-      ),
+      ShowdRoute<void>(builder: (_) => CommitmentWizard(existing: commitment)),
     );
 
 void openAttempt(BuildContext context, Attempt attempt) => Navigator.push(
   context,
-  MaterialPageRoute<void>(builder: (_) => AttemptScreen(attemptId: attempt.id)),
+  ShowdRoute<void>(builder: (_) => AttemptScreen(attemptId: attempt.id)),
 );
 
 /// Opens the store paywall, or the in-app plan page when RevenueCat is not
@@ -48,9 +48,65 @@ Future<void> openPro(BuildContext context) async {
   if (!context.mounted) return;
   await Navigator.push(
     context,
-    MaterialPageRoute<void>(builder: (_) => ProScreen(initialMessage: problem)),
+    ShowdRoute<void>(builder: (_) => ProScreen(initialMessage: problem)),
   );
 }
+
+/// The phone's own alarm, set in its Clock app. Rings once.
+Future<void> showRegularAlarmSheet(BuildContext context) =>
+    showShowdSheet<void>(
+      context,
+      builder: (sheetContext) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Center(child: ShowdMark(state: MarkState.ringing, size: 64)),
+          const SizedBox(height: ShowdSpace.s4),
+          Center(child: Text('Regular alarm', style: ShowdType.titleL)),
+          const SizedBox(height: ShowdSpace.s1),
+          Center(
+            child: Text(
+              'Rings once, in your Clock app.',
+              style: ShowdType.bodyM,
+            ),
+          ),
+          const SizedBox(height: ShowdSpace.s6),
+          ShowdButton(
+            label: 'Set a time',
+            icon: ShowdIcons.alarm,
+            onPressed: () async {
+              final time = await showTimePicker(
+                context: sheetContext,
+                initialTime: const TimeOfDay(hour: 7, minute: 0),
+              );
+              if (time == null || !sheetContext.mounted) return;
+              Navigator.pop(sheetContext);
+              try {
+                await AlarmChannel.createNativeAlarm(
+                  hour: time.hour,
+                  minute: time.minute,
+                  label: 'ShowdUp',
+                );
+              } catch (error) {
+                if (context.mounted) showMessage(context, friendlyError(error));
+              }
+            },
+          ),
+          const SizedBox(height: ShowdSpace.s2),
+          ShowdButton(
+            label: 'Open Clock',
+            tone: ShowdButtonTone.quiet,
+            onPressed: () async {
+              Navigator.pop(sheetContext);
+              try {
+                await AlarmChannel.showNativeAlarms();
+              } catch (error) {
+                if (context.mounted) showMessage(context, friendlyError(error));
+              }
+            },
+          ),
+        ],
+      ),
+    );
 
 /// A quiet upgrade prompt: one line of why, one action.
 Future<void> showProSheet(

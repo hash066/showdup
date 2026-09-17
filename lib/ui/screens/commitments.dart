@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../design/sensory.dart';
+import '../../design/motion.dart';
 import '../../design/buttons.dart';
 import '../../design/chrome.dart';
 import '../../design/icons.dart';
@@ -33,15 +35,22 @@ class CommitmentsScreen extends ConsumerWidget {
       ),
       children: [
         if (items.isEmpty) ...[
-          Text('No proof alarms yet.', style: ShowdType.titleL),
-          const SizedBox(height: ShowdSpace.s2),
-          Text(
-            'A proof alarm keeps ringing until your phone sees you did it.',
-            style: ShowdType.bodyM,
-          ),
+          const SizedBox(height: ShowdSpace.s12),
+          const Reveal(child: Center(child: RingingMark(size: 120))),
           const SizedBox(height: ShowdSpace.s6),
+          Reveal(
+            delay: const Duration(milliseconds: 80),
+            child: Text(
+              'Nothing yet.',
+              textAlign: TextAlign.center,
+              style: ShowdType.hero,
+            ),
+          ),
+          const SizedBox(height: ShowdSpace.s8),
         ],
-        for (final c in items) _CommitmentRow(app: app, commitment: c),
+        ...staggered([
+          for (final c in items) _CommitmentRow(app: app, commitment: c),
+        ]),
         const SizedBox(height: ShowdSpace.s6),
         ShowdButton(
           label: 'New proof alarm',
@@ -53,7 +62,7 @@ class CommitmentsScreen extends ConsumerWidget {
         ),
         const SizedBox(height: ShowdSpace.s3),
         Text(
-          isPro ? 'Pro · up to 20 on at once' : 'Free · one on at a time',
+          isPro ? 'Pro · 20 at once' : 'Free · 1 at a time',
           textAlign: TextAlign.center,
           style: ShowdType.caption,
         ),
@@ -98,7 +107,6 @@ class _CommitmentRow extends StatelessWidget {
         ShowdRow(
           leading: const ShowdIcon(ShowdIcons.close, color: ShowdColors.alert),
           title: 'Archive',
-          subtitle: 'It stops ringing. History stays.',
           danger: true,
           onTap: () {
             Navigator.pop(sheetContext);
@@ -123,11 +131,10 @@ class _CommitmentRow extends StatelessWidget {
       ),
       title: c.title,
       subtitle: draft
-          ? 'Draft · needs Android access'
+          ? 'Needs access'
           : [
               scheduleLine(c),
-              if (caught)
-                'catches ${c.restrictions.packages.length} app${c.restrictions.packages.length == 1 ? '' : 's'}',
+              if (caught) 'holds ${c.restrictions.packages.length}',
             ].join(' · '),
       trailing: draft
           ? TextButton(
@@ -138,10 +145,13 @@ class _CommitmentRow extends StatelessWidget {
               label: active ? 'Turn off ${c.title}' : 'Turn on ${c.title}',
               child: Switch(
                 value: active,
-                onChanged: (on) => _setStatus(
-                  context,
-                  on ? CommitmentStatus.active : CommitmentStatus.paused,
-                ),
+                onChanged: (on) {
+                  Sensory.play(on ? Cue.toggleOn : Cue.toggleOff);
+                  _setStatus(
+                    context,
+                    on ? CommitmentStatus.active : CommitmentStatus.paused,
+                  );
+                },
               ),
             ),
     );

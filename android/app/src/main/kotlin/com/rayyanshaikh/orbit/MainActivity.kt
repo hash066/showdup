@@ -128,6 +128,13 @@ class MainActivity:FlutterFragmentActivity(){
    }
    else->result.notImplemented()
   }}catch(e:Exception){result.error("scan_failed",e.message,null)}}
+  Sensory.warm(this)
+  MethodChannel(engine.dartExecutor.binaryMessenger,"app.showdup/sensory").setMethodCallHandler{call,result->try{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();when(call.method){
+   "cue"->{Sensory.cue(this,a["name"]?.toString().orEmpty(),(a["intensity"] as? Number)?.toFloat()?:1f,a["sound"]!=false,a["haptic"]!=false);result.success(true)}
+   "configure"->{Sensory.configure(this,a["sounds"] as? Boolean,a["haptics"] as? Boolean,a["alarmSound"]?.toString());result.success(true)}
+   "settings"->result.success(mapOf("sounds" to Sensory.soundsOn(this),"haptics" to Sensory.hapticsOn(this),"alarmSound" to Sensory.alarmSound(this)))
+   else->result.notImplemented()
+  }}catch(e:Exception){result.error("sensory_error",e.message,null)}}
   AlarmEngine.channels(this)
   if(intent.getBooleanExtra("restoreOverlay",false)){intent.removeExtra("restoreOverlay");OverlayService.enable(this)}
  }

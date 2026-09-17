@@ -39,6 +39,7 @@ class BlockerActivity : Activity() {
         window.statusBarColor = Brand.ink
         window.navigationBarColor = Brand.ink
         render()
+        Sensory.cue(this, "caught")
         if (Build.VERSION.SDK_INT >= 33) {
             onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) { goHome() }
         }
@@ -116,6 +117,28 @@ class BlockerActivity : Activity() {
 
         root.addView(column, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        animateIn(column)
+    }
+
+    private fun animateIn(column: LinearLayout) {
+        val reduce = Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+        if (reduce) return
+        for (i in 0 until column.childCount) {
+            val child = column.getChildAt(i)
+            if (child is MarkView) {
+                child.scaleX = 0.6f; child.scaleY = 0.6f; child.alpha = 0f
+                child.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(420)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(2.2f))
+                    .withEndAction {
+                        // Ring: a few quick rocks around the mark's centre.
+                        android.animation.ObjectAnimator.ofFloat(child, View.ROTATION, 0f, -14f, 12f, -9f, 6f, -3f, 0f).apply { duration = 700; start() }
+                    }.start()
+            } else {
+                child.alpha = 0f; child.translationY = Brand.dp(this, 16f)
+                child.animate().alpha(1f).translationY(0f).setStartDelay(120L + i * 45L).setDuration(360)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start()
+            }
+        }
     }
 
     private fun promiseCommitment(attemptId: String): JSONObject? {
@@ -168,7 +191,7 @@ class BlockerActivity : Activity() {
     private fun button(label: String, filled: Boolean, onClick: () -> Unit) = text(label, 17f, if (filled) Brand.ink else Brand.paper, Brand.bold(this)).apply {
         gravity = Gravity.CENTER
         background = if (filled) pill(Brand.accent, null) else pill(Brand.ink, Brand.graphiteStrong)
-        setOnClickListener { onClick() }
+        setOnClickListener { Sensory.cue(this@BlockerActivity, "tap"); onClick() }
     }
 
     /**
@@ -198,18 +221,23 @@ class BlockerActivity : Activity() {
         frame.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    Sensory.cue(this, "tap")
                     label.text = "Keep holding…"
                     holdAnimator?.cancel()
                     holdAnimator = ValueAnimator.ofFloat(fill.scaleX, 1f).apply {
                         duration = (HOLD_MS * (1f - fill.scaleX)).toLong().coerceAtLeast(1L)
-                        addUpdateListener { fill.scaleX = it.animatedValue as Float }
+                        var lastTick = (fill.scaleX * 4).toInt()
+                        addUpdateListener {
+                            fill.scaleX = it.animatedValue as Float
+                            val tick = (fill.scaleX * 4).toInt()
+                            if (tick > lastTick && tick < 4) { lastTick = tick; Sensory.cue(this@BlockerActivity, "holdTick", tick / 4f) }
+                        }
                         addListener(object : android.animation.AnimatorListenerAdapter() {
                             private var cancelled = false
                             override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
                             override fun onAnimationEnd(animation: android.animation.Animator) {
                                 if (cancelled) return
-                                view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                Sensory.cue(this@BlockerActivity, "toggleOff")
                                 endToday(attemptId)
                             }
                         })

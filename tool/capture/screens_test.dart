@@ -128,6 +128,22 @@ void main() {
     );
   });
 
+  for (var page = 0; page < 4; page++) {
+    testWidgets('story $page', (t) async {
+      await shoot(
+        t,
+        '02-story-$page',
+        StoryScreen(onDone: () async {}),
+        before: () async {
+          for (var i = 0; i < page; i++) {
+            await t.tap(find.text('Next'));
+            await t.pumpAndSettle();
+          }
+        },
+      );
+    });
+  }
+
   testWidgets('why this works', (t) async {
     await shoot(t, '02-why', WhyThisWorksScreen(onContinue: () async {}));
   });

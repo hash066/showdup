@@ -186,7 +186,7 @@ void main() {
     final gesture = await tester.startGesture(tester.getCenter(hold));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('Keep holding…'), findsOneWidget);
+    expect(find.text('Keep holding'), findsOneWidget);
     expect(held, 0);
     await tester.pump(ShowdMotion.hold);
     await gesture.up();

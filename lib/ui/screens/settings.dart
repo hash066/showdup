@@ -5,6 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config.dart';
 import '../../core/features.dart';
+import '../../design/sensory.dart';
+import '../../design/motion.dart';
 import '../../design/buttons.dart';
 import '../../design/chrome.dart';
 import '../../design/companion.dart';
@@ -55,10 +57,12 @@ class SettingsScreen extends ConsumerWidget {
                 children: [
                   Row(
                     children: [
-                      CompanionView(
-                        mascot: pet.mascot,
-                        mood: companionMoodFor(pet.mood),
-                        size: 64,
+                      Breathe(
+                        child: CompanionView(
+                          mascot: pet.mascot,
+                          mood: companionMoodFor(pet.mood),
+                          size: 64,
+                        ),
                       ),
                       const SizedBox(width: ShowdSpace.s4),
                       Expanded(
@@ -75,10 +79,10 @@ class SettingsScreen extends ConsumerWidget {
                             ),
                             Text(
                               app.preview
-                                  ? 'Sample data. Nothing is checked for real.'
+                                  ? 'Sample data'
                                   : isPro
-                                  ? 'Thanks for backing ShowdUp.'
-                                  : 'One proof alarm, one caught app.',
+                                  ? 'Thank you'
+                                  : '1 alarm · 1 app',
                               style: ShowdType.bodyM,
                             ),
                           ],
@@ -87,12 +91,11 @@ class SettingsScreen extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: ShowdSpace.s6),
+                  const _FeelSection(),
+                  const SizedBox(height: ShowdSpace.s4),
                   ShowdRow(
                     leading: const ShowdIcon(ShowdIcons.shield),
                     title: isPro ? 'Manage subscription' : 'ShowdUp Pro',
-                    subtitle: isPro
-                        ? 'Change or cancel in Google Play.'
-                        : 'More alarms, places and apps.',
                     trailing: isPro ? null : const ProPill(),
                     onTap: () => isPro
                         ? launchUrl(
@@ -104,23 +107,20 @@ class SettingsScreen extends ConsumerWidget {
                   ShowdRow(
                     leading: const ShowdIcon(ShowdIcons.companion),
                     title: 'Companion',
-                    subtitle: pet.mascot.label,
                     onTap: () => showCompanionSheet(context, app),
                   ),
                   if (Features.overlay && !app.preview)
                     ShowdRow(
                       leading: const ShowdIcon(ShowdIcons.focus),
                       title: 'Companion bubble',
-                      subtitle: 'Your next alarm, floating over other apps.',
                       onTap: () => _toggleOverlay(context),
                     ),
                   ShowdRow(
                     leading: const ShowdIcon(ShowdIcons.bell),
                     title: 'Permissions',
-                    subtitle: 'Notifications, exact alarms, battery.',
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute<void>(
+                      ShowdRoute<void>(
                         builder: (_) => const PermissionsScreen(),
                       ),
                     ),
@@ -128,18 +128,14 @@ class SettingsScreen extends ConsumerWidget {
                   ShowdRow(
                     leading: const ShowdIcon(ShowdIcons.lock),
                     title: 'Privacy & proof',
-                    subtitle: 'What stays on this phone.',
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const PrivacyScreen(),
-                      ),
+                      ShowdRoute<void>(builder: (_) => const PrivacyScreen()),
                     ),
                   ),
                   ShowdRow(
                     leading: const ShowdIcon(ShowdIcons.info),
                     title: 'Why this works',
-                    subtitle: 'The research behind it.',
                     onTap: onWhyThisWorks,
                   ),
                   ShowdRow(
@@ -155,12 +151,9 @@ class SettingsScreen extends ConsumerWidget {
                     ShowdRow(
                       leading: const ShowdIcon(ShowdIcons.edit),
                       title: 'Design gallery',
-                      subtitle: 'Debug builds only.',
                       onTap: () => Navigator.push(
                         context,
-                        MaterialPageRoute<void>(
-                          builder: (_) => const DesignGallery(),
-                        ),
+                        ShowdRoute<void>(builder: (_) => const DesignGallery()),
                       ),
                     ),
                   const SizedBox(height: ShowdSpace.s8),
@@ -173,7 +166,6 @@ class SettingsScreen extends ConsumerWidget {
                   else
                     ShowdRow(
                       title: 'Delete data on this phone',
-                      subtitle: 'Alarms and history. Your subscription stays.',
                       danger: true,
                       onTap: () => _delete(context, app),
                     ),
@@ -471,5 +463,85 @@ class PrivacyScreen extends StatelessWidget {
         ],
       ),
     ),
+  );
+}
+
+/// Sounds, haptics and the alarm tone.
+class _FeelSection extends StatelessWidget {
+  const _FeelSection();
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: Sensory.settings,
+    builder: (context, feel, _) => Column(
+      children: [
+        _Toggle(
+          icon: ShowdIcons.bell,
+          title: 'Sounds',
+          value: feel.sounds,
+          onChanged: (on) async {
+            await Sensory.configure(sounds: on);
+            Sensory.play(on ? Cue.toggleOn : Cue.toggleOff, haptic: false);
+          },
+        ),
+        _Toggle(
+          icon: ShowdIcons.focus,
+          title: 'Haptics',
+          value: feel.haptics,
+          onChanged: (on) async {
+            await Sensory.configure(haptics: on);
+            Sensory.play(on ? Cue.toggleOn : Cue.toggleOff, sound: false);
+          },
+        ),
+        ShowdRow(
+          leading: const ShowdIcon(ShowdIcons.alarm),
+          title: 'Tone',
+          trailing: SegmentedButton<String>(
+            showSelectedIcon: false,
+            style: SegmentedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              textStyle: ShowdType.bodyM,
+              selectedBackgroundColor: ShowdColors.accent.withValues(
+                alpha: .16,
+              ),
+              selectedForegroundColor: ShowdColors.accent,
+              foregroundColor: ShowdColors.stone,
+              side: const BorderSide(color: ShowdColors.graphiteStrong),
+            ),
+            segments: const [
+              ButtonSegment(value: 'showdup', label: Text('ShowdUp')),
+              ButtonSegment(value: 'system', label: Text('Phone')),
+            ],
+            selected: {feel.alarmSound},
+            onSelectionChanged: (value) {
+              Sensory.play(Cue.select);
+              Sensory.configure(alarmSound: value.first);
+            },
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _Toggle extends StatelessWidget {
+  const _Toggle({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final ShowdIcons icon;
+  final String title;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => ShowdRow(
+    leading: ShowdIcon(icon),
+    title: title,
+    onTap: () => onChanged(!value),
+    trailing: Switch(value: value, onChanged: onChanged),
   );
 }

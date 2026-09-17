@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/features.dart';
+import '../design/motion.dart';
 import '../design/chrome.dart';
 import '../design/icons.dart';
 import '../design/layout.dart';
@@ -138,9 +139,7 @@ class _AppEntryState extends State<AppEntry> {
       );
     }
     if (entering) {
-      return _material(
-        const Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
+      return _material(const Scaffold(body: Center(child: ShowdLoader())));
     }
     return _material(
       WelcomeScreen(
@@ -347,7 +346,7 @@ class _HomeShellState extends ConsumerState<HomeShell>
           _openingAttemptId = attemptId;
           try {
             await Navigator.of(context).push(
-              MaterialPageRoute<void>(
+              ShowdRoute<void>(
                 builder: (_) => AttemptScreen(attemptId: attemptId),
               ),
             );
@@ -398,12 +397,12 @@ class _HomeShellState extends ConsumerState<HomeShell>
 
   void _openSettings() => Navigator.push(
     context,
-    MaterialPageRoute<void>(
+    ShowdRoute<void>(
       builder: (settingsContext) => SettingsScreen(
         onLogout: widget.onLogout,
         onWhyThisWorks: () => Navigator.push(
           settingsContext,
-          MaterialPageRoute<void>(
+          ShowdRoute<void>(
             builder: (whyContext) => WhyThisWorksScreen(
               onContinue: () async => Navigator.pop(whyContext),
             ),
@@ -452,28 +451,53 @@ class _HomeShellState extends ConsumerState<HomeShell>
                   ),
                   child: ScreenHeader(
                     leading: const Wordmark(size: 22),
-                    trailing: ShowdIconButton(
-                      key: ShowdKeys.navSettings,
-                      icon: ShowdIcons.settings,
-                      semanticLabel: 'Settings',
-                      onPressed: _openSettings,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ShowdIconButton(
+                          icon: ShowdIcons.alarm,
+                          semanticLabel: 'Regular alarm',
+                          onPressed: () => showRegularAlarmSheet(context),
+                        ),
+                        ShowdIconButton(
+                          key: ShowdKeys.navSettings,
+                          icon: ShowdIcons.settings,
+                          semanticLabel: 'Settings',
+                          onPressed: _openSettings,
+                        ),
+                      ],
                     ),
                   ),
                 ),
                 Expanded(
-                  child: switch (tabs[index].key) {
-                    ShowdKeys.navAlarms => AlarmsScreen(
-                      nudge: _nudge,
-                      onNudgeDismiss: () => setState(() => _nudge = null),
-                      onNudgeOpen: () {
-                        setState(() => _nudge = null);
-                        openPro(context);
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 320),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: ScaleTransition(
+                        scale: Tween(begin: 0.97, end: 1.0).animate(animation),
+                        child: child,
+                      ),
+                    ),
+                    child: KeyedSubtree(
+                      key: ValueKey(tabs[index].key),
+                      child: switch (tabs[index].key) {
+                        ShowdKeys.navAlarms => AlarmsScreen(
+                          nudge: _nudge,
+                          onNudgeDismiss: () => setState(() => _nudge = null),
+                          onNudgeOpen: () {
+                            setState(() => _nudge = null);
+                            openPro(context);
+                          },
+                        ),
+                        ShowdKeys.navCommitments => const CommitmentsScreen(),
+                        ShowdKeys.navHistory => const HistoryScreen(),
+                        _ => const BattleScreen(),
                       },
                     ),
-                    ShowdKeys.navCommitments => const CommitmentsScreen(),
-                    ShowdKeys.navHistory => const HistoryScreen(),
-                    _ => const BattleScreen(),
-                  },
+                  ),
                 ),
               ],
             ),

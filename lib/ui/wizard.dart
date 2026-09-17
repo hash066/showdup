@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/features.dart';
+import '../design/motion.dart';
+import '../design/sensory.dart';
 import '../design/buttons.dart';
 import '../design/chrome.dart';
 import '../design/icons.dart';
@@ -52,6 +54,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       tagLabel = TextEditingController(),
       reason = TextEditingController();
   String? placeId, placeAddress;
+
+  /// Direction of the last step change, for the slide.
+  bool _forward = true;
   int page = 0,
       walkMinutes = 15,
       walkDistanceM = 1000,
@@ -326,6 +331,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _ => null,
     };
     if (problem != null) {
+      Sensory.play(Cue.error);
       setState(() => error = problem);
       return;
     }
@@ -333,7 +339,10 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       await save();
       return;
     }
-    setState(() => page++);
+    setState(() {
+      _forward = true;
+      page++;
+    });
     if (page == 2 && (_focus || (_canCatch && restrictionsEnabled))) {
       await _loadBlockableApps();
     }
@@ -392,6 +401,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           ),
         );
       }
+      Sensory.play(Cue.release);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -637,47 +647,70 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
                 child: StepLine(count: _stepCount, index: page),
               ),
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(
-                    ShowdSpace.gutter,
-                    ShowdSpace.s6,
-                    ShowdSpace.gutter,
-                    ShowdSpace.s6,
-                  ),
-                  children: [
-                    KeyedSubtree(
-                      key: ShowdKeys.wizardStep(page),
-                      child: Text(_stepTitle, style: ShowdType.titleXL),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 380),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) {
+                    final incoming = child.key == ValueKey('step$page');
+                    final from =
+                        (incoming ? 1 : -1) * (_forward ? 0.18 : -0.18);
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween(
+                          begin: Offset(from, 0),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: ListView(
+                    key: ValueKey('step$page'),
+                    padding: const EdgeInsets.fromLTRB(
+                      ShowdSpace.gutter,
+                      ShowdSpace.s6,
+                      ShowdSpace.gutter,
+                      ShowdSpace.s6,
                     ),
-                    const SizedBox(height: ShowdSpace.s2),
-                    Text(_stepBody, style: ShowdType.bodyM),
-                    const SizedBox(height: ShowdSpace.s6),
-                    ...switch (page) {
-                      0 => _presetStep(),
-                      1 => _whenStep(),
-                      2 => _appsStep(),
-                      _ => _confirmStep(),
-                    },
-                    if (error != null) ...[
-                      const SizedBox(height: ShowdSpace.s4),
-                      ShowdNotice(error!),
-                      if (!_preview && page >= 2)
-                        ShowdButton(
-                          label: page == 2
-                              ? 'Open Accessibility settings'
-                              : 'Open permissions',
-                          tone: ShowdButtonTone.quiet,
-                          onPressed: page == 2
-                              ? BlockerChannel.openAccessibilitySettings
-                              : () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => const PermissionsScreen(),
+                    children: [
+                      KeyedSubtree(
+                        key: ShowdKeys.wizardStep(page),
+                        child: Text(_stepTitle, style: ShowdType.titleXL),
+                      ),
+                      if (_stepBody case final body?) ...[
+                        const SizedBox(height: ShowdSpace.s2),
+                        Text(body, style: ShowdType.bodyM),
+                      ],
+                      const SizedBox(height: ShowdSpace.s6),
+                      ...staggered(switch (page) {
+                        0 => _presetStep(),
+                        1 => _whenStep(),
+                        2 => _appsStep(),
+                        _ => _confirmStep(),
+                      }, step: const Duration(milliseconds: 30)),
+                      if (error != null) ...[
+                        const SizedBox(height: ShowdSpace.s4),
+                        ShowdNotice(error!),
+                        if (!_preview && page >= 2)
+                          ShowdButton(
+                            label: page == 2
+                                ? 'Open Accessibility settings'
+                                : 'Open permissions',
+                            tone: ShowdButtonTone.quiet,
+                            onPressed: page == 2
+                                ? BlockerChannel.openAccessibilitySettings
+                                : () => Navigator.push(
+                                    context,
+                                    ShowdRoute<void>(
+                                      builder: (_) => const PermissionsScreen(),
+                                    ),
                                   ),
-                                ),
-                        ),
+                          ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               Padding(
@@ -696,6 +729,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
                         onPressed: busy
                             ? null
                             : () => setState(() {
+                                _forward = false;
                                 page--;
                                 error = null;
                               }),
@@ -727,34 +761,31 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
   String get _holdName => Features.catchEnabled ? 'Catch' : 'Hold';
 
   String get _stepTitle => switch (page) {
-    0 => 'What will you show up for?',
-    1 => 'When should it ring?',
-    2 when _focus => 'Which apps pull you away?',
-    2 => Features.catchEnabled ? 'Catch an app?' : 'Hold an app until then?',
+    0 => 'Show up for…',
+    1 => 'When?',
+    2 when _focus => 'Which apps?',
+    2 => Features.catchEnabled ? 'Catch an app?' : 'Hold an app?',
     _ => 'Ready?',
   };
 
-  String get _stepBody => switch (page) {
-    0 => 'Your phone checks it. There’s no “done” button to tap.',
-    1 => 'Reminders repeat inside this window and stop when it closes.',
-    2 when _focus => 'Ten seconds in one of these restarts the timer.',
-    2 =>
-      'Pick the app you reach for. It stays closed until you show up or end today. Optional.',
-    _ => 'Change any of it later.',
+  String? get _stepBody => switch (page) {
+    2 when _focus => 'Ten seconds in one restarts the timer.',
+    2 => 'It stays shut until you show up. Optional.',
+    _ => null,
   };
 
   List<Widget> _presetStep() {
     final isPro = _isPro;
     return [
       for (final (preset, subtitle) in [
-        (CommitmentKind.steps, 'New steps, counted by your phone'),
-        (CommitmentKind.focus, 'Time away from the apps you pick'),
-        (CommitmentKind.tagScan, 'Scan a code you stick where it happens'),
-        (CommitmentKind.leetcode, 'Accepted problems on your profile · beta'),
-        (CommitmentKind.workout, 'Recorded in Health Connect'),
-        (CommitmentKind.gym, 'Checks you in when you get there'),
-        (CommitmentKind.arrive, 'Class, office, library'),
-        (CommitmentKind.walk, 'Time or distance, checked by GPS'),
+        (CommitmentKind.steps, 'Counted by your phone'),
+        (CommitmentKind.focus, 'Phone down, timer on'),
+        (CommitmentKind.tagScan, 'Scan a code you place'),
+        (CommitmentKind.leetcode, 'Solve problems · beta'),
+        (CommitmentKind.workout, 'Health Connect'),
+        (CommitmentKind.gym, 'Auto check-in'),
+        (CommitmentKind.arrive, 'Get somewhere'),
+        (CommitmentKind.walk, 'GPS time or distance'),
       ])
         // A hidden preset stays visible only while editing an alarm that
         // already uses it, so existing setups remain editable.
@@ -781,7 +812,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$targetSteps',
         unit: 'new steps',
-        slider: Slider(
+        slider: TickSlider(
           value: targetSteps.toDouble(),
           min: 500,
           max: 15000,
@@ -853,7 +884,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           _amount(
             value: '$walkMinutes',
             unit: 'minutes',
-            slider: Slider(
+            slider: TickSlider(
               value: walkMinutes.toDouble(),
               min: 5,
               max: 120,
@@ -870,7 +901,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           _amount(
             value: (walkDistanceM / 1000).toStringAsFixed(2),
             unit: 'km',
-            slider: Slider(
+            slider: TickSlider(
               value: walkDistanceM.toDouble(),
               min: 250,
               max: 10000,
@@ -896,7 +927,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$radiusM',
         unit: 'metres around the place',
-        slider: Slider(
+        slider: TickSlider(
           value: radiusM.toDouble(),
           min: 100,
           max: 300,
@@ -913,7 +944,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$focusMinutes',
         unit: 'minutes, phone down',
-        slider: Slider(
+        slider: TickSlider(
           value: focusMinutes.toDouble(),
           min: 5,
           max: 180,
@@ -947,7 +978,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$workoutMinutes',
         unit: 'recorded minutes',
-        slider: Slider(
+        slider: TickSlider(
           value: workoutMinutes.toDouble(),
           min: 10,
           max: 180,
@@ -1012,7 +1043,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$targetAccepted',
         unit: targetAccepted == 1 ? 'accepted problem' : 'accepted problems',
-        slider: Slider(
+        slider: TickSlider(
           value: targetAccepted.toDouble(),
           min: 1,
           max: 10,
@@ -1131,8 +1162,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           for (final day in (days.toList()..sort())) _dayWindowRow(day),
       ] else
         ShowdRow(
-          title: 'A different time each day',
-          subtitle: 'Mondays can start later than Fridays.',
+          title: 'A time for each day',
           trailing: const ProPill(),
           onTap: () => openPro(context),
         ),
@@ -1140,7 +1170,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       const SectionLabel('Reminders'),
       const SizedBox(height: ShowdSpace.s3),
       Text('Every $interval minutes', style: ShowdType.bodyL),
-      Slider(
+      TickSlider(
         value: interval.toDouble(),
         min: 5,
         max: 120,
@@ -1151,7 +1181,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
         'Up to $maxReminders reminder${maxReminders == 1 ? '' : 's'}',
         style: ShowdType.bodyL,
       ),
-      Slider(
+      TickSlider(
         value: maxReminders.toDouble(),
         min: 1,
         max: 6,
@@ -1345,7 +1375,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           ),
         const SizedBox(height: ShowdSpace.s4),
         if (loadingApps)
-          const Center(child: CircularProgressIndicator())
+          const Center(child: ShowdLoader())
         else if (blockableApps.isEmpty)
           ShowdButton(
             label: _preview ? 'Apps load on your phone' : 'Load my apps',
