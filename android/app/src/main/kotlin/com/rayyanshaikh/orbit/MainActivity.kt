@@ -167,6 +167,8 @@ class MainActivity:FlutterFragmentActivity(){
     for((key,value) in AlarmEngine.prefs(this).all)if(key.startsWith("expiration:"))try{expirations[key.removePrefix("expiration:")]=JSONObject(value as String).toMap()}catch(_:Exception){}
     r.success(expirations)
    }
+   "pendingUserEnds"->{val ends=mutableMapOf<String,Any?>();for((key,value) in AlarmEngine.prefs(this).all)if(key.startsWith("user_end:"))try{ends[key.removePrefix("user_end:")]=JSONObject(value as String).toMap()}catch(_:Exception){};r.success(ends)}
+   "acknowledgeUserEnds"->{val ids=args["attemptIds"] as? List<*>?:emptyList<Any>();val edit=AlarmEngine.prefs(this).edit();ids.forEach{edit.remove("user_end:$it")};edit.apply();r.success(true)}
    "acknowledgeExpirations"->{val ids=args["attemptIds"] as? List<*>?:emptyList<Any>();val edit=AlarmEngine.prefs(this).edit();ids.forEach{edit.remove("expiration:$it")};edit.apply();r.success(true)}
    "pendingReminderEvents"->{
     val events=mutableMapOf<String,Any?>();val counts=mutableMapOf<String,Int>()

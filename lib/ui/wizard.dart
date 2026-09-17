@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/features.dart';
@@ -205,7 +206,8 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       '${(walkDistanceM / 1000).toStringAsFixed(2)} km by GPS',
     WalkConfig(mode: WalkGoalMode.destination) =>
       'Get within 150 m of ${label.text.isEmpty ? 'your destination' : label.text}',
-    StepsConfig(:final targetSteps) => '$targetSteps new steps in the window',
+    StepsConfig(:final targetSteps) =>
+      '${NumberFormat.decimalPattern().format(targetSteps)} new steps in the window',
     TagScanConfig(:final label) =>
       'Scan the tag ${label?.isNotEmpty == true ? 'at $label' : 'you placed'}',
     LocationConfig() =>

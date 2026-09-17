@@ -20,8 +20,8 @@ object AlarmEngine {
  fun prefs(c: Context) = c.getSharedPreferences("showdup_native", Context.MODE_PRIVATE)
  fun channels(c: Context) {
   val nm = c.getSystemService(NotificationManager::class.java)
-  nm.createNotificationChannel(NotificationChannel("reminders", "Commitment reminders", NotificationManager.IMPORTANCE_HIGH).apply { description = "Escalating reminders until verified or the reminder limit is reached"; setSound(null, null) })
-  nm.createNotificationChannel(NotificationChannel("tracking", "Verification in progress", NotificationManager.IMPORTANCE_LOW))
+  nm.createNotificationChannel(NotificationChannel("reminders", "Alarms", NotificationManager.IMPORTANCE_HIGH).apply { description = "Rings until you show up, or until today's reminders run out"; setSound(null, null) })
+  nm.createNotificationChannel(NotificationChannel("tracking", "Proof in progress", NotificationManager.IMPORTANCE_LOW).apply { description = "Shows live progress while your phone checks proof" })
  }
  fun launch(c: Context, id: String) = PendingIntent.getActivity(c, id.hashCode(), Intent(c, MainActivity::class.java).putExtra("attemptId", id).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
  private fun alarmIntent(c: Context, id: String, index: Int) = PendingIntent.getBroadcast(c, ("$id:$index").hashCode(), Intent(c, AlarmReceiver::class.java).setAction("showdup.reminder.$id.$index").putExtra("attemptId", id).putExtra("index", index), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -83,7 +83,9 @@ object AlarmEngine {
    if (FocusTracker.status(c,id)["completed"] == true) return
   }
   val snooze = PendingIntent.getBroadcast(c, ("snooze:$id:$index").hashCode(), Intent(c, AlarmReceiver::class.java).setAction("showdup.snooze").putExtra("attemptId", id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-  val n = NotificationCompat.Builder(c, "reminders").setSmallIcon(R.drawable.ic_notification).setContentTitle(j.optString("title", "Time to show up")).setContentText("Pulse ${index + 1} of ${min(6, j.optInt("maxReminders", 6))}. Snoozing lowers today’s score.").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM).setContentIntent(launch(c, id)).setFullScreenIntent(launch(c, id), true).setAutoCancel(true).addAction(0, "Snooze", snooze).build()
+  val total = min(6, j.optInt("maxReminders", 6))
+  val body = if (index == 0) "Time to show up. It keeps ringing until you do." else "Still here. Reminder ${index + 1} of $total."
+  val n = NotificationCompat.Builder(c, "reminders").setSmallIcon(R.drawable.ic_notification).setColor(Brand.accent).setContentTitle(j.optString("title", "Time to show up")).setContentText(body).setSubText("Snoozing costs 5 points").setPriority(NotificationCompat.PRIORITY_MAX).setCategory(NotificationCompat.CATEGORY_ALARM).setContentIntent(launch(c, id)).setFullScreenIntent(launch(c, id), true).setAutoCancel(true).addAction(0, "Snooze", snooze).build()
   c.getSystemService(NotificationManager::class.java).notify(id.hashCode(), n); ringingId?.let { silence(c, it, false, "replaced") }; ringingId = id
   if (j.optString("volumeMode") == "loud") { val audio = c.getSystemService(AudioManager::class.java); originalVolume = audio.getStreamVolume(AudioManager.STREAM_ALARM); audio.setStreamVolume(AudioManager.STREAM_ALARM, audio.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0) }
   ringtone = RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)); ringtone?.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(); ringtone?.play(); handler.postDelayed({ if (ringingId == id) silence(c, id, true, "automatic") }, 30_000); event(c, id, "fired", index.toString())
@@ -126,6 +128,15 @@ object AlarmEngine {
   ringingId?.let { if (it != TEST_ID) return }
   ringtone = RingtoneManager.getRingtone(c, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)); ringtone?.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build(); ringtone?.play(); ringingId = TEST_ID
   handler.postDelayed({ if (ringingId == TEST_ID) silence(c, TEST_ID, false, "test") }, 8_000)
+ }
+
+ /**
+  * The Caught screen's "Hold to end today". Alarms and holds stop now; Flutter
+  * records the attempt as ended the next time it opens.
+  */
+ fun endByUser(c: Context, id: String) {
+  prefs(c).edit().putString("user_end:$id", JSONObject().put("attemptId", id).put("endedAt", System.currentTimeMillis()).toString()).apply()
+  cancel(c, id)
  }
 
  fun clear(c: Context) { for ((k, _) in prefs(c).all) if (k.startsWith("alarm:")) cancel(c, k.removePrefix("alarm:")); prefs(c).edit().clear().apply() }

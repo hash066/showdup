@@ -9,6 +9,8 @@ import '../platform/alarm_channel.dart';
 import '../platform/blocker_channel.dart';
 import '../platform/overlay_channel.dart';
 import '../core/features.dart';
+import '../design/companion.dart';
+import '../design/companion_image.dart';
 import '../models/pet.dart';
 import '../verification/verifier.dart';
 import '../verification/verifier_registry.dart';
@@ -83,6 +85,7 @@ class AppController extends ChangeNotifier {
         await _recoverNativeFailures(repository as LocalRepository);
         await _recoverNativeReminderCounts(repository as LocalRepository);
         await _recoverNativeExpirations(repository as LocalRepository);
+        await _recoverNativeUserEnds(repository as LocalRepository);
         await _recoverReaches(repository as LocalRepository);
       }
       await repository.call('syncAttempts', {});
@@ -140,6 +143,32 @@ class AppController extends ChangeNotifier {
         'app.showdup/alarm',
       ).invokeMethod('acknowledgeExpirations', {'attemptIds': acknowledged});
     }
+  }
+
+  /// "Hold to end today" on the native Caught screen, applied once Flutter runs.
+  Future<void> _recoverNativeUserEnds(LocalRepository local) async {
+    const channel = MethodChannel('app.showdup/alarm');
+    final raw = await channel.invokeMethod<Map>('pendingUserEnds');
+    if (raw == null || raw.isEmpty) return;
+    final acknowledged = <String>[];
+    for (final attemptId in raw.keys.map((key) => key.toString())) {
+      final separator = attemptId.lastIndexOf('_');
+      if (separator > 0) {
+        try {
+          await local.call('endAttempt', {
+            'commitmentId': attemptId.substring(0, separator),
+            'date': attemptId.substring(separator + 1),
+            'reason': 'user_ended',
+          });
+        } on StateError {
+          // Already finished or gone: nothing left to end.
+        }
+      }
+      acknowledged.add(attemptId);
+    }
+    await channel.invokeMethod('acknowledgeUserEnds', {
+      'attemptIds': acknowledged,
+    });
   }
 
   Future<void> _recoverReaches(LocalRepository local) async {
@@ -301,7 +330,11 @@ class AppController extends ChangeNotifier {
   Future<void> _syncOverlay() async {
     if (preview || repository is! LocalRepository) return;
     try {
-      await OverlayChannel.sync(petSnapshot);
+      final pet = petSnapshot;
+      final image = Features.overlay
+          ? await CompanionImage.path(pet.mascot, companionMoodFor(pet.mood))
+          : null;
+      await OverlayChannel.sync(pet, companionImage: image);
     } on MissingPluginException {
       // Overlay is Android-only.
     } on PlatformException {

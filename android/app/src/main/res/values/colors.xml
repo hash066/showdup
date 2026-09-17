@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FF8A4C</color>
+    <!-- Brand tokens. Change brand_accent and brand_accent_deep together with
+         ShowdColors.accent in lib/design/tokens.dart. -->
+    <color name="ink">#0E0E0C</color>
+    <color name="carbon">#171714</color>
+    <color name="graphite">#262622</color>
+    <color name="paper">#F2EEE6</color>
+    <color name="stone">#8F8A80</color>
+    <color name="brand_accent">#5CF0BE</color>
+    <color name="brand_accent_deep">#2A9C77</color>
+    <color name="ic_launcher_background">@color/brand_accent</color>
 </resources>
