@@ -152,12 +152,13 @@ ThemeData buildShowdTheme() {
       side: const BorderSide(color: ShowdColors.graphiteStrong, width: 2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
     ),
-    sliderTheme: const SliderThemeData(
+    sliderTheme: SliderThemeData(
       activeTrackColor: ShowdColors.accent,
       inactiveTrackColor: ShowdColors.graphite,
       thumbColor: ShowdColors.accent,
       overlayColor: Color(0x225CF0BE),
       trackHeight: 6,
+      tickMarkShape: SliderTickMarkShape.noTickMark,
     ),
     chipTheme: ChipThemeData(
       backgroundColor: ShowdColors.ink,
@@ -169,6 +170,7 @@ ThemeData buildShowdTheme() {
         borderRadius: BorderRadius.circular(ShowdRadius.pill),
       ),
       checkmarkColor: ShowdColors.ink,
+      showCheckmark: false,
     ),
     dividerTheme: const DividerThemeData(
       color: ShowdColors.graphite,

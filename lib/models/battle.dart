@@ -22,7 +22,7 @@ class BattleMemberScore {
       BattleMemberScore(
         uid: uid,
         displayName: data['displayName'] as String? ?? 'Player',
-        mascot: data['mascot'] as String? ?? 'fox',
+        mascot: data['mascot'] as String? ?? 'dot',
         score: (data['score'] as num?)?.toInt() ?? 0,
         eligibleAttempts: (data['eligibleAttempts'] as num?)?.toInt() ?? 0,
         rank: (data['rank'] as num?)?.toInt() ?? 0,

@@ -59,6 +59,35 @@ void main() {
       );
     });
 
+    test('smooth curves reflect the previous control point', () {
+      final smooth = svgPath('M0 0C0 10 10 10 10 0S20 -10 20 0').getBounds();
+      final explicit = svgPath(
+        'M0 0C0 10 10 10 10 0C10 -10 20 -10 20 0',
+      ).getBounds();
+      expect(smooth, explicit);
+      final quad = svgPath('M0 0Q5 10 10 0T20 0').getBounds();
+      expect(quad, svgPath('M0 0Q5 10 10 0Q15 -10 20 0').getBounds());
+    });
+
+    test('every icon stays inside its 24 unit grid', () {
+      for (final icon in ShowdIcons.values) {
+        for (final data in icon.allPaths) {
+          // Path.getBounds includes curve control points, so sample the
+          // outline itself.
+          for (final metric in svgPath(data).computeMetrics()) {
+            for (var d = 0.0; d <= metric.length; d += .25) {
+              final p = metric.getTangentForOffset(d)!.position;
+              expect(
+                p.dx >= -.01 && p.dx <= 24.01 && p.dy >= -.01 && p.dy <= 24.01,
+                isTrue,
+                reason: '${icon.name} leaves the grid at $p',
+              );
+            }
+          }
+        }
+      }
+    });
+
     test('every icon parses to a non-empty path', () {
       for (final icon in ShowdIcons.values) {
         for (final data in icon.allPaths) {

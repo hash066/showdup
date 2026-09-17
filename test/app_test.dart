@@ -37,13 +37,19 @@ void main() {
       for (final tab in [
         ShowdKeys.navCommitments,
         ShowdKeys.navHistory,
-        ShowdKeys.navSettings,
         ShowdKeys.navAlarms,
       ]) {
         await tester.tap(find.byKey(tab));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull, reason: tab.value);
       }
+      await tester.tap(find.byKey(ShowdKeys.navSettings));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'settings');
+      Navigator.of(tester.element(find.byType(SettingsScreen))).pop();
+      await tester.pumpAndSettle();
+      expect(find.byKey(ShowdKeys.navAlarms), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
     },
@@ -113,7 +119,7 @@ void main() {
         overrides: [appProvider.overrideWith((ref) => c)],
         child: MaterialApp(
           theme: buildTheme(),
-          home: const Scaffold(body: TodayScreen()),
+          home: const Scaffold(body: AlarmsScreen()),
         ),
       ),
     );
@@ -123,38 +129,44 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
   });
-  testWidgets('commitment setup is two steps and exposes verified presets', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(430, 1600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final prefs = await SharedPreferences.getInstance();
-    final controller = AppController(PreviewRepository(prefs));
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [appProvider.overrideWith((ref) => controller)],
-        child: MaterialApp(theme: buildTheme(), home: const CommitmentWizard()),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(ShowdKeys.wizardStep(0)), findsOneWidget);
-    for (final preset in CommitmentKind.values) {
-      expect(
-        find.byKey(ShowdKeys.wizardPreset(preset)),
-        Features.presetEnabled(preset) ? findsOneWidget : findsNothing,
-        reason: preset.wire,
+  testWidgets(
+    'commitment setup walks four steps and exposes verified presets',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final prefs = await SharedPreferences.getInstance();
+      final controller = AppController(PreviewRepository(prefs));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appProvider.overrideWith((ref) => controller)],
+          child: MaterialApp(
+            theme: buildTheme(),
+            home: const CommitmentWizard(),
+          ),
+        ),
       );
-    }
-    await tester.ensureVisible(find.byKey(ShowdKeys.wizardNext));
-    await tester.tap(find.byKey(ShowdKeys.wizardNext));
-    await tester.pumpAndSettle();
-    expect(find.byKey(ShowdKeys.wizardStep(1)), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump();
-  });
+      await tester.pumpAndSettle();
+      expect(find.byKey(ShowdKeys.wizardStep(0)), findsOneWidget);
+      for (final preset in CommitmentKind.values) {
+        expect(
+          find.byKey(ShowdKeys.wizardPreset(preset)),
+          Features.presetEnabled(preset) ? findsOneWidget : findsNothing,
+          reason: preset.wire,
+        );
+      }
+      for (var step = 1; step < 4; step++) {
+        await tester.ensureVisible(find.byKey(ShowdKeys.wizardNext));
+        await tester.tap(find.byKey(ShowdKeys.wizardNext));
+        await tester.pumpAndSettle();
+        expect(find.byKey(ShowdKeys.wizardStep(step)), findsOneWidget);
+        expect(tester.takeException(), isNull, reason: 'step $step');
+      }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    },
+  );
   test(
     'preview persists edits and ending; free gate remains enforced',
     () async {

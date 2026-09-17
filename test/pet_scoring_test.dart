@@ -68,19 +68,22 @@ void main() {
     );
   });
 
-  test('completion ends a genuine-miss run while low seven-day ratio stays sad', () {
-    final attempts = [
-      attempt('latest', AttemptState.completed),
-      attempt('old', AttemptState.expired, daysAgo: 1),
-    ];
-    expect(PetScoring.consecutiveMisses(attempts), 0);
-    expect(
-      PetScoring.mood(
-        recentAttempts: attempts,
-        currentSnoozes: 1,
-        cracked: false,
-      ),
-      PetMood.sad,
-    );
-  });
+  test(
+    'completion ends a genuine-miss run while low seven-day ratio stays sad',
+    () {
+      final attempts = [
+        attempt('latest', AttemptState.completed),
+        attempt('old', AttemptState.expired, daysAgo: 1),
+      ];
+      expect(PetScoring.consecutiveMisses(attempts), 0);
+      expect(
+        PetScoring.mood(
+          recentAttempts: attempts,
+          currentSnoozes: 1,
+          cracked: false,
+        ),
+        PetMood.sad,
+      );
+    },
+  );
 }

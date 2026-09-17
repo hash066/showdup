@@ -155,8 +155,9 @@ class LocalRepository implements Repository {
 
   /// Animals are a Pro unlock. The stored choice survives a lapsed
   /// subscription and comes back on renewal; until then the dot shows.
-  MascotId get selectedMascot =>
-      _selectedMascot.isPremium && !_profile.isPro ? MascotId.dot : _selectedMascot;
+  MascotId get selectedMascot => _selectedMascot.isPremium && !_profile.isPro
+      ? MascotId.dot
+      : _selectedMascot;
   bool get petCracked => _petCracked;
   int get burstCount => _burstCount;
   int weeklyPetPenalty(DateTime monday) =>

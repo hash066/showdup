@@ -2,13 +2,13 @@ import 'dart:ui';
 
 /// Parses SVG path data for the brand's own vector shapes.
 ///
-/// Supports the absolute and relative M, L, H, V, C, Q, A and Z commands,
+/// Supports the absolute and relative M, L, H, V, C, S, Q, T, A and Z commands,
 /// including implicit repeats. Parsed paths are cached by their source.
 Path svgPath(String data) => _cache.putIfAbsent(data, () => _parse(data));
 
 final _cache = <String, Path>{};
 final _token = RegExp(
-  r'[MmLlHhVvCcQqAaZz]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?',
+  r'[MmLlHhVvCcSsQqTtAaZz]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?',
 );
 final _command = RegExp(r'^[A-Za-z]$');
 
@@ -18,6 +18,8 @@ Path _parse(String data) {
   var i = 0;
   String? cmd;
   var x = 0.0, y = 0.0, startX = 0.0, startY = 0.0;
+  // Last control point, reflected by S and T. Null after other commands.
+  double? cubicX, cubicY, quadX, quadY;
   double n() => double.parse(tokens[i++]);
 
   while (i < tokens.length) {
@@ -26,6 +28,11 @@ Path _parse(String data) {
     } else if (cmd == null) {
       break;
     }
+    final wasCubic = cubicX,
+        wasCubicY = cubicY,
+        wasQuad = quadX,
+        wasQuadY = quadY;
+    cubicX = cubicY = quadX = quadY = null;
     switch (cmd) {
       case 'M' || 'm':
         final dx = n(), dy = n();
@@ -54,6 +61,19 @@ Path _parse(String data) {
         final x2 = n() + (rel ? x : 0), y2 = n() + (rel ? y : 0);
         final ex = n() + (rel ? x : 0), ey = n() + (rel ? y : 0);
         path.cubicTo(x1, y1, x2, y2, ex, ey);
+        cubicX = x2;
+        cubicY = y2;
+        x = ex;
+        y = ey;
+      case 'S' || 's':
+        final rel = cmd == 's';
+        final x1 = wasCubic == null ? x : 2 * x - wasCubic;
+        final y1 = wasCubicY == null ? y : 2 * y - wasCubicY;
+        final x2 = n() + (rel ? x : 0), y2 = n() + (rel ? y : 0);
+        final ex = n() + (rel ? x : 0), ey = n() + (rel ? y : 0);
+        path.cubicTo(x1, y1, x2, y2, ex, ey);
+        cubicX = x2;
+        cubicY = y2;
         x = ex;
         y = ey;
       case 'Q' || 'q':
@@ -61,6 +81,18 @@ Path _parse(String data) {
         final x1 = n() + (rel ? x : 0), y1 = n() + (rel ? y : 0);
         final ex = n() + (rel ? x : 0), ey = n() + (rel ? y : 0);
         path.quadraticBezierTo(x1, y1, ex, ey);
+        quadX = x1;
+        quadY = y1;
+        x = ex;
+        y = ey;
+      case 'T' || 't':
+        final rel = cmd == 't';
+        final x1 = wasQuad == null ? x : 2 * x - wasQuad;
+        final y1 = wasQuadY == null ? y : 2 * y - wasQuadY;
+        final ex = n() + (rel ? x : 0), ey = n() + (rel ? y : 0);
+        path.quadraticBezierTo(x1, y1, ex, ey);
+        quadX = x1;
+        quadY = y1;
         x = ex;
         y = ey;
       case 'A' || 'a':
