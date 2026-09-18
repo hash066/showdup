@@ -6,53 +6,73 @@ ShowdUp
 
 ## Short description
 
-Recurring reminders and proof-based follow-through for the promises you make.
+An alarm you have to show up for. Your phone checks, so there is no snooze.
 
 ## Full description
 
-Snooze buys time. Evidence completes the task.
+Snooze buys time. Showing up ends the alarm.
 
-ShowdUp helps you follow through on recurring commitments without pretending
-that checking a box proves anything. Choose a clear time window and one of two
-supported completion rules:
+ShowdUp is an alarm clock for the promise you keep breaking. You pick the time
+and what showing up means. It rings, and it keeps coming back until your phone
+can tell you actually did it. There is no “done” button to lie to.
 
-- New steps recorded by your phone during the window.
-- Arrival and a continuous stay near a place you choose.
+What can count as showing up:
 
-ShowdUp keeps reminding you during the agreed window. Completing the evidence
-stops the remaining reminders. If plans change, “End today without completing”
-stops the disturbance and records an honest abandoned attempt. Sensor or
-permission problems are recorded as unable to verify and do not count as a
-failure.
+- Steps walked during the window, counted by your phone.
+- Phone left alone, with a timer that resets if you pick it up.
+- A tag you place across the room, scanned with Google's own scanner.
+- LeetCode problems solved, read from your public profile (beta).
 
-Free includes one active commitment, adjustable reminder intervals, reliable
-on-device verification, personal progress, and seven days of history.
+With Pro you can also arrive at a place, reach a gym, or walk a distance by GPS.
 
-ShowdUp Pro adds multiple commitments, different time windows for individual
-weekdays, up to two years of history and patterns, and optional selected-app
-restrictions. Pro users can also share a weekly progress check-in with a buddy
-through Android’s share sheet. With your explicit Accessibility
-permission, only apps you choose can be covered during an active commitment.
-ShowdUp does not read screen contents or typed text, and the restriction can be
-disabled in Android Settings or by uninstalling the app.
+Every alarm has a window. Reminders keep arriving inside it, at the gap you
+choose, up to the number you choose. Proof stops them. If the day falls apart,
+hold “End today” — it stops the reminders and records an honest ended day, with
+no guilt and no lost streak. If a sensor or permission fails, the day is
+recorded as “your phone couldn't tell”, never as a miss.
 
-Verification and reminders are local-first. Location, step evidence,
-commitments, and history stay on your device in the current production flow.
+Hold an app until you show up: choose an app you reach for first thing. During
+the window ShowdUp catches it — the first time with a screen that explains the
+rule and offers to end the day, and after that with a small card that says
+“Caught.” before Android goes home. The moment you show up, it opens again.
+This uses Android's Accessibility service, with your permission, to see only
+which app came to the front. ShowdUp never reads your screen, what you type,
+your notifications or your passwords, and you can switch it off in Android
+settings at any time. Your phone app, messages, Settings and emergency apps are
+never held.
+
+History shows your rhythm over four weeks, your longest streak and the days you
+tend to miss. A companion sits with you: a dot for everyone, animals with Pro.
+Battles are a private weekly scoreboard with up to ten friends.
+
+Free: one proof alarm, one held app, seven days of history, the dot companion.
+Pro: 20 proof alarms, gym, places and GPS walks, a different time each day, two
+years of history and patterns, every app held, animal companions, and battles of
+ten. ₹79 a month or ₹399 a year with 7 days free. Google Play shows the final
+price before you pay, and a subscription renews until you cancel it in Google
+Play.
+
+Alarms, history and proof stay on your phone. Nothing about what you did is
+uploaded. Battles sync only a name you choose, a companion and weekly scores.
+You can erase everything from Settings.
 
 ## Screenshot sequence
 
-The repository includes five verified 1080 × 2400 release-build screenshots:
+Regenerate the phone screenshots from the current design before the next
+upload; the files under `store-assets/` still show the previous look. Shoot
+1080 × 2400 release-build screens in this order:
 
-1. `store-assets/phone-01-welcome.png` — “Keep the promise you made to yourself.”
-2. `store-assets/phone-02-today.png` — active attempt and verification progress.
-3. `store-assets/phone-03-commitments.png` — recurring commitments and schedules.
-4. `store-assets/phone-04-history.png` — completion states, streak, and patterns.
-5. `store-assets/phone-05-pro.png` — Pro features and pricing entry point.
+1. Alarms with the alarm ringing now — the mark, the time, “Prove it”.
+2. Proof counting up — steps, the bar filling, “Hold to end”.
+3. Showed up — the mark flipped, the mint takeover.
+4. Caught — the full screen over a held app.
+5. History — rhythm, streak, the month of marks.
+6. Pro — what it adds and the price.
 
 Also upload `store-assets/high-res-icon.png` as the 512 × 512 store icon and
 `store-assets/feature-graphic.png` as the 1024 × 500 feature graphic. Keep the
 SVG files as editable masters; Google Play receives the PNG files.
 
-Every screenshot using sample data visibly says “LOCAL PREVIEW · Sample data,
-no live verification.” Replace these later with real-device screens only after
-the same flows have passed physical-device testing.
+Any screenshot taken from sample data must keep the visible “Preview · sample
+data” label. Replace them with real-device screens once those flows have passed
+physical-device testing.

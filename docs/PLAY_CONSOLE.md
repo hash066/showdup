@@ -57,10 +57,15 @@ the current RevenueCat data-safety guidance immediately before submission.
 
 ## Sensitive capability declarations
 
-- Accessibility: describe the optional Pro selected-app restriction, its
+- Accessibility: describe the optional selected-app hold ("the catch"), its
   prominent in-app disclosure, the exact foreground-package comparison, and
-  that it does not read screen contents, text, passwords, or inject input.
-  Supply Play's requested demonstration video.
+  that it does not read screen contents, text, passwords, or inject input. The
+  service declares `android:isAccessibilityTool="false"` because it is a
+  product feature, not an assistive tool. Say that the first catch of a day
+  opens ShowdUp's own full screen and later reaches show a two-second
+  accessibility overlay before the system Home action, and that the overlay is
+  ShowdUp's own text only and can be turned off in Settings. Supply Play's
+  requested demonstration video showing both.
 - Foreground services: declare location verification and, where requested by
   target Android version, health/step verification. The visible ongoing
   notification explains active verification.
@@ -87,7 +92,10 @@ the current RevenueCat data-safety guidance immediately before submission.
 1. Rotate the exposed upload-key credentials; reset the upload key through Play
    if the current public key was already registered.
 2. Publish `PRIVACY.md` at a public, active HTTPS URL with a real developer
-   contact, then build with that exact `PRIVACY_POLICY_URL`.
+   contact, then build with that exact `PRIVACY_POLICY_URL`. `public/privacy/`
+   and `public/delete-account/` carry the hosted copies; enter the deletion URL
+   in the Console's data-deletion field (Play requires both an in-app path,
+   Settings → Delete data on this phone, and a web URL).
 3. Complete app access, ads, content rating, target audience, news, health, and
    other declarations truthfully for the Console prompts shown to this account.
 4. Upload the store assets listed in `store-assets/README.md`.

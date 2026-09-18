@@ -1364,7 +1364,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       if (showPicker) ...[
         const SizedBox(height: ShowdSpace.s3),
         const ShowdNotice(
-          'Android Accessibility tells ShowdUp only which app is in front. It never reads the screen, what you type or passwords.',
+          'Android Accessibility tells ShowdUp only which app is in front. It never reads the screen, what you type or passwords. When a held app opens, ShowdUp says “Caught.” over it and goes home.',
           icon: ShowdIcons.shield,
         ),
         if (!_preview && blockerStatus?.accessibilityEnabled != true)

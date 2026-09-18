@@ -16,6 +16,7 @@ import '../../design/layout.dart';
 import '../../design/tokens.dart';
 import '../../design/type.dart';
 import '../../models/pet.dart';
+import '../../platform/blocker_channel.dart';
 import '../../platform/overlay_channel.dart';
 import '../../services/controller.dart';
 import '../../services/social_service.dart';
@@ -405,7 +406,7 @@ class PrivacyScreen extends StatelessWidget {
                   ),
                   (
                     'Apps you choose',
-                    'For Phone-down focus, and for apps you catch, Android Accessibility tells ShowdUp only which app came to the front. ShowdUp never reads what is on screen, what you type, your notifications or passwords. Settings, your phone app and emergency apps are never held. Turn it off any time in Android Accessibility settings.',
+                    'For Phone-down focus, and for apps you catch, Android Accessibility tells ShowdUp only which app came to the front. ShowdUp never reads what is on screen, what you type, your notifications or passwords. The first catch of the day shows the full screen; after that a small card says “Caught.” over the app for two seconds and Android goes home. Settings, your phone app and emergency apps are never held. Turn it off any time in Android Accessibility settings.',
                   ),
                   if (Features.workout)
                     (
@@ -493,6 +494,7 @@ class _FeelSection extends StatelessWidget {
             Sensory.play(on ? Cue.toggleOn : Cue.toggleOff, sound: false);
           },
         ),
+        if (Features.catchEnabled) const _QuickCatchToggle(),
         ShowdRow(
           leading: const ShowdIcon(ShowdIcons.alarm),
           title: 'Tone',
@@ -524,16 +526,71 @@ class _FeelSection extends StatelessWidget {
   );
 }
 
+/// The small Caught flash, on by default. Only useful once Accessibility is
+/// on, so the row stays hidden until then.
+class _QuickCatchToggle extends StatefulWidget {
+  const _QuickCatchToggle();
+
+  @override
+  State<_QuickCatchToggle> createState() => _QuickCatchToggleState();
+}
+
+class _QuickCatchToggleState extends State<_QuickCatchToggle> {
+  BlockerStatus? status;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final value = await BlockerChannel.status();
+      if (mounted) setState(() => status = value);
+    } catch (_) {
+      // No native side (tests, preview): leave the row out.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = status;
+    if (value == null || !value.accessibilityEnabled) {
+      return const SizedBox.shrink();
+    }
+    return _Toggle(
+      icon: ShowdIcons.caught,
+      title: 'Quick catch',
+      subtitle: 'After the first catch, a flash, then home.',
+      value: value.quickCatch,
+      onChanged: (on) async {
+        setState(
+          () => status = BlockerStatus(
+            accessibilityEnabled: value.accessibilityEnabled,
+            active: value.active,
+            quickCatch: on,
+          ),
+        );
+        Sensory.play(on ? Cue.toggleOn : Cue.toggleOff);
+        await BlockerChannel.setQuickCatch(on);
+      },
+    );
+  }
+}
+
 class _Toggle extends StatelessWidget {
   const _Toggle({
     required this.icon,
     required this.title,
     required this.value,
     required this.onChanged,
+    this.subtitle,
   });
 
   final ShowdIcons icon;
   final String title;
+  final String? subtitle;
   final bool value;
   final ValueChanged<bool> onChanged;
 
@@ -541,6 +598,7 @@ class _Toggle extends StatelessWidget {
   Widget build(BuildContext context) => ShowdRow(
     leading: ShowdIcon(icon),
     title: title,
+    subtitle: subtitle,
     onTap: () => onChanged(!value),
     trailing: Switch(value: value, onChanged: onChanged),
   );

@@ -50,6 +50,13 @@ an active restricted commitment, the service receives window-change events to
 identify the package name of the foreground app. It compares that package name
 with the apps you selected and can show a ShowdUp blocking screen.
 
+The first catch of a day shows that full screen, which explains the rule and
+offers to end the day. Later reaches show a small accessibility overlay for
+about two seconds saying you were caught, and ShowdUp then uses Android's own
+Home action to leave the app. The overlay contains only ShowdUp's own text, is
+never drawn over the held app's content for longer than that, and can be turned
+off in Settings ("Quick catch"), which restores the full screen every time.
+
 ShowdUp does not use this service to read screen contents, typed text,
 notifications, passwords, or form fields; it does not inject gestures or key
 events; and it does not transmit Accessibility events or the selected-app list.

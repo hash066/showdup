@@ -18,14 +18,20 @@ class BlockerStatus {
   const BlockerStatus({
     required this.accessibilityEnabled,
     required this.active,
+    this.quickCatch = true,
   });
 
   final bool accessibilityEnabled;
   final bool active;
 
+  /// After the first catch of the day, later reaches get the small flash
+  /// instead of the full Caught screen.
+  final bool quickCatch;
+
   factory BlockerStatus.fromMap(Map<dynamic, dynamic> value) => BlockerStatus(
     accessibilityEnabled: value['accessibilityEnabled'] == true,
     active: value['active'] == true,
+    quickCatch: value['quickCatch'] != false,
   );
 }
 
@@ -72,6 +78,11 @@ class BlockerChannel {
 
   static Future<void> openAccessibilitySettings() =>
       _channel.invokeMethod<void>('openAccessibilitySettings');
+
+  /// Turns the small Caught flash on or off. Off means every reach shows the
+  /// full Caught screen.
+  static Future<void> setQuickCatch(bool enabled) =>
+      _channel.invokeMethod<void>('setQuickCatch', {'enabled': enabled});
 
   static Future<void> sync(List<BlockerSession> sessions) =>
       _channel.invokeMethod<void>('sync', {

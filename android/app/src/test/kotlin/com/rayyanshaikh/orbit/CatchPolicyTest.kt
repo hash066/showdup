@@ -1,6 +1,7 @@
 package com.rayyanshaikh.orbit
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,5 +38,19 @@ class CatchPolicyTest {
         assertNull(CatchPolicy.holdingAttempt(sessions, "feed", false, true, now))
         assertEquals("late", CatchPolicy.holdingAttempt(sessions, "reels", true, false, now))
         assertNull(CatchPolicy.holdingAttempt(sessions, "games", true, false, now))
+    }
+
+    @Test fun firstReachOfAnAttemptGetsTheFullScreen() {
+        assertFalse(CatchPolicy.flashInstead("early", explainedAttemptId = null, quickCatch = true, touchExploration = false))
+        assertFalse(CatchPolicy.flashInstead("early", explainedAttemptId = "yesterday", quickCatch = true, touchExploration = false))
+    }
+
+    @Test fun laterReachesFlashOnceTheRuleIsExplained() {
+        assertTrue(CatchPolicy.flashInstead("early", explainedAttemptId = "early", quickCatch = true, touchExploration = false))
+    }
+
+    @Test fun flashStaysOffWhenSwitchedOffOrTalkBackIsOn() {
+        assertFalse(CatchPolicy.flashInstead("early", explainedAttemptId = "early", quickCatch = false, touchExploration = false))
+        assertFalse(CatchPolicy.flashInstead("early", explainedAttemptId = "early", quickCatch = true, touchExploration = true))
     }
 }

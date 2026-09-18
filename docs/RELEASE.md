@@ -41,6 +41,13 @@ root with:
 Do not omit `--dart-define-from-file=config.release.json`; without
 `REVENUECAT_ANDROID_KEY`, the production paywall is deliberately disabled.
 
+Release builds run R8: the code is shrunk, obfuscated and resource-stripped
+(`android/app/proguard-rules.pro` keeps the manifest entry points). Gradle
+writes `build/app/outputs/mapping/release/mapping.txt`; an App Bundle carries it
+to Play automatically, so keep the file with each uploaded build to read
+crash stacks. After any dependency change, install the release artifact on a
+device and walk one full alarm — R8 problems only appear at runtime.
+
 For free local Pro purchase testing before Play approval, copy
 `config.sandbox.example.json` to the ignored `config.sandbox.json`, set the
 RevenueCat Test Store public key, and run:

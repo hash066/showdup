@@ -29,6 +29,19 @@ object CatchPolicy {
         return open.firstOrNull()?.packages?.take(1)?.toSet().orEmpty()
     }
 
+    /**
+     * What a reach should show. The full Caught screen explains the rule the
+     * first time an attempt catches you; later reaches get the small flash,
+     * unless it is switched off or TalkBack is on, where a card that leaves by
+     * itself is a poor target.
+     */
+    fun flashInstead(
+        attemptId: String,
+        explainedAttemptId: String?,
+        quickCatch: Boolean,
+        touchExploration: Boolean,
+    ): Boolean = quickCatch && !touchExploration && explainedAttemptId == attemptId
+
     /** The attempt whose hold covers [packageName], for counting reaches. */
     fun holdingAttempt(
         sessions: List<CatchSession>,

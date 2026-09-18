@@ -49,6 +49,7 @@ class AlarmsScreen extends ConsumerWidget {
         .toList();
     final a = today.firstOrNull;
     final c = a == null ? null : app.commitment(a.commitmentId);
+    final rest = restOfToday(today, a?.commitmentId);
     final offers = [
       for (final commitment in active)
         if (app.ladderOffer(commitment.id) case final offer?
@@ -86,10 +87,10 @@ class AlarmsScreen extends ConsumerWidget {
                     _Hero(app: app, attempt: a, commitment: c)
                   else
                     _Empty(active: active, drafts: drafts, now: now),
-                  if (today.length > 1) ...[
+                  if (rest.isNotEmpty) ...[
                     const SizedBox(height: ShowdSpace.s8),
                     ...staggered([
-                      for (final other in today.skip(1))
+                      for (final other in rest)
                         AttemptRow(
                           other,
                           app.commitment(other.commitmentId)?.title ?? 'Alarm',
@@ -146,6 +147,18 @@ class AlarmsScreen extends ConsumerWidget {
               ),
       ),
     );
+  }
+
+  /// The rows under the hero: one per other alarm. Tomorrow's attempt for the
+  /// alarm already in the hero is the same alarm, so it never gets its own row.
+  static List<Attempt> restOfToday(List<Attempt> today, String? heroCommitment) {
+    final rest = <Attempt>[];
+    for (final other in today.skip(1)) {
+      if (other.commitmentId == heroCommitment) continue;
+      if (rest.any((x) => x.commitmentId == other.commitmentId)) continue;
+      rest.add(other);
+    }
+    return rest;
   }
 
   static List<Attempt> _todayAttempts(List<Attempt> attempts, DateTime now) {

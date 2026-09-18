@@ -80,6 +80,7 @@ class MainActivity:FlutterFragmentActivity(){
    "sync"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();val sessions=(a["sessions"] as? List<*>)?.mapNotNull{it as? Map<*,*>}?:emptyList();result.success(AppBlocker.sync(this,sessions))}
    "setEntitlement"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();AppBlocker.setEntitlement(this,a["enabled"]==true,(a["expiresAtEpochMs"] as? Number)?.toLong(),a["freeCatch"]==true);result.success(true)}
    "reaches"->result.success(AppBlocker.reaches(this))
+   "setQuickCatch"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();CaughtFlash.setEnabled(this,a["enabled"]!=false);result.success(true)}
    "appLabels"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();result.success(AppBlocker.appLabels(this,(a["packages"] as? List<*>)?.mapNotNull{it?.toString()}.orEmpty()))}
    "openApp"->{val a=call.arguments as? Map<*,*>?:emptyMap<String,Any>();result.success(AppBlocker.openApp(this,a["packageName"]?.toString().orEmpty()))}
    "stop"->{val a=call.arguments as? Map<*,*>;AppBlocker.stop(this,a?.get("attemptId")?.toString());result.success(true)}

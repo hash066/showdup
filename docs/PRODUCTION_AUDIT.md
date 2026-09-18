@@ -56,9 +56,22 @@ separate authorized integrations and policies before they can be advertised.
 ## Verified repository evidence
 
 - `flutter analyze`: clean.
-- Flutter tests: 34 passed, including every navigation destination, all attempt
-  states, free/Pro gates, restart recovery, pet transitions, scoring and
-  unverifiable exclusions.
+- Flutter tests: 71 passed (2026-09-18), including every navigation
+  destination, all attempt states, free/Pro gates, restart recovery, pet
+  transitions, scoring, unverifiable exclusions and the design system.
+- Android unit tests cover the alarm schedule, focus and catch policies,
+  including which reaches get the full Caught screen and which get the flash.
+- Release builds now run R8 (`isMinifyEnabled`, `isShrinkResources`,
+  `android/app/proguard-rules.pro`). A full `assembleRelease` on 2026-09-18
+  shrank, obfuscated and dexed the app and wrote `mapping.txt`; it stopped only
+  at signing, because the keystore lives outside the repository.
+- The catch shows ShowdUp's own full screen on the first reach of an attempt
+  and a two-second accessibility overlay ("Quick catch", Settings) after that,
+  followed by the system Home action. The overlay needs no draw-over
+  permission, falls back to the full screen when it cannot be shown or when
+  TalkBack is on, and one app open counts one reach.
+- `public/` is on the current brand and carries the privacy policy plus the
+  Play-required data deletion page at `/delete-account/`.
 - Social scoring tests: 3 passed; Firestore/Auth/Functions emulator tests: 4
   passed, covering unauthorized access, server-only writes, capacity and
   idempotency. Obsolete cloud commitment/evidence code has been removed. The

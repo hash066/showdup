@@ -12,6 +12,7 @@ import 'package:showdup/services/pro_nudge_policy.dart';
 import 'package:showdup/services/repository.dart';
 import 'package:showdup/services/rest_policy.dart';
 import 'package:showdup/services/rhythm.dart';
+import 'package:showdup/ui/screens/alarms.dart';
 import 'package:showdup/verification/leetcode_verifier.dart';
 import 'package:showdup/verification/tag_scan_verifier.dart';
 import 'package:showdup/verification/verifier.dart';
@@ -383,6 +384,20 @@ void main() {
       }).validate(),
       isNotNull,
     );
+  });
+
+  test('the alarm in the hero never gets a second row', () {
+    final today = [
+      _attempt(17, AttemptState.pending),
+      // Tomorrow's attempt for the same alarm, which the window filter keeps.
+      _attempt(18, AttemptState.pending),
+      _attempt(17, AttemptState.pending, commitmentId: 'other'),
+      _attempt(18, AttemptState.pending, commitmentId: 'other'),
+    ];
+    final rest = AlarmsScreen.restOfToday(today, 'c');
+    expect(rest.map((a) => a.commitmentId), ['other']);
+    expect(rest.single.date, '2026-09-17');
+    expect(AlarmsScreen.restOfToday(const [], null), isEmpty);
   });
 
   test('unawaited futures are not left behind', () async {

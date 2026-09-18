@@ -40,12 +40,27 @@ class AppBlockerService : AccessibilityService() {
         handler.post(focusTicker)
     }
 
+    private var lastCaughtPackage = ""
+    private var lastCaughtAt = 0L
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString() ?: return
         FocusTracker.onPackageChanged(this, packageName)
         val attemptId = AppBlocker.holdingAttempt(this, packageName) ?: return
+        // One open can raise several window events. React, and count the reach,
+        // once per open instead of once per event. The window stays short so a
+        // deliberate second open is still caught.
+        if (CaughtFlash.showing()) return
+        val now = System.currentTimeMillis()
+        if (packageName == lastCaughtPackage && now - lastCaughtAt < REACH_DEBOUNCE_MS) return
+        lastCaughtPackage = packageName
+        lastCaughtAt = now
         AppBlocker.recordReach(this, attemptId, packageName)
 
+        // The full screen explains the rule the first time. After that a small
+        // flash says caught and Android goes home.
+        if (CaughtFlash.show(this, packageName, attemptId)) return
+        CaughtFlash.markExplained(this, attemptId)
         startActivity(Intent(this, BlockerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(BlockerActivity.EXTRA_PACKAGE, packageName)
@@ -57,12 +72,14 @@ class AppBlockerService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(focusTicker)
+        CaughtFlash.dismiss(null)
         if (instance === this) instance = null
         super.onDestroy()
     }
 
     companion object {
         var instance: AppBlockerService? = null
+        private const val REACH_DEBOUNCE_MS = 1_200L
     }
 }
 
@@ -198,6 +215,7 @@ object AppBlocker {
         return mapOf(
             "accessibilityEnabled" to accessibilityEnabled(context),
             "active" to isActive(context),
+            "quickCatch" to CaughtFlash.enabled(context),
         )
     }
 
@@ -249,6 +267,9 @@ object FocusTracker {
     private const val PREFS = "showdup_focus"
     private const val KEY_SESSIONS = "sessions"
     private var foregroundPackage: String? = null
+
+    /** The app in front, as the accessibility service last saw it. */
+    val currentPackage: String? get() = foregroundPackage
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
