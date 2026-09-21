@@ -180,7 +180,7 @@ object AppBlocker {
     /** Counts a reach per attempt. Entries older than a week are dropped. */
     fun recordReach(context: Context, attemptId: String, packageName: String) {
         val now = System.currentTimeMillis()
-        val all = try { JSONObject(prefs(context).getString(KEY_REACHES, "{}")) } catch (_: Exception) { JSONObject() }
+        val all = try { JSONObject(prefs(context).getString(KEY_REACHES, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
         val kept = JSONObject()
         all.keys().forEach { key ->
             val entry = all.optJSONObject(key) ?: return@forEach
@@ -192,7 +192,7 @@ object AppBlocker {
     }
 
     fun reaches(context: Context): Map<String, Int> {
-        val all = try { JSONObject(prefs(context).getString(KEY_REACHES, "{}")) } catch (_: Exception) { return emptyMap() }
+        val all = try { JSONObject(prefs(context).getString(KEY_REACHES, "{}") ?: "{}") } catch (_: Exception) { return emptyMap() }
         return all.keys().asSequence().associateWith { all.optJSONObject(it)?.optInt("count") ?: 0 }
     }
 

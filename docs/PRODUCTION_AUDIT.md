@@ -48,15 +48,18 @@ automated evidence; it does not replace the external Play Console gates below.
   invites, aggregate outcome scoring and pet state. No commitment titles,
   sensor readings, coordinates or evidence are uploaded.
 - [x] No OneSignal dependency or periodic Firebase commitment scan remains.
+- [x] LeetCode beta verifies ownership with a one-time public-profile code and
+  counts accepted submissions from the public profile. Service outages make an
+  attempt unverifiable instead of failed.
 
-The plan deliberately does not promise Health Connect workouts, LeetCode,
-flashcards or publishing integrations. Those were future examples and require
-separate authorized integrations and policies before they can be advertised.
+The 1.0 release deliberately does not promise Health Connect workouts,
+flashcards or publishing integrations. Those remain disabled or out of scope
+until their integrations, device tests and policy declarations are complete.
 
 ## Verified repository evidence
 
 - `flutter analyze`: clean.
-- Flutter tests: 71 passed (2026-09-18), including every navigation
+- Flutter tests: 77 passed (2026-09-21), including every navigation
   destination, all attempt states, free/Pro gates, restart recovery, pet
   transitions, scoring, unverifiable exclusions and the design system.
 - Android unit tests cover the alarm schedule, focus and catch policies,
@@ -86,9 +89,11 @@ separate authorized integrations and policies before they can be advertised.
   were removed so only anonymous/Google Battles can reach Firebase.
 - Android alarm-policy unit tests and a fresh native Kotlin compile passed after
   overlay-revocation, exact-alarm fallback and blocker safety-list hardening.
-- A fresh release AAB including the final local hardening built and its JAR
-  signature verified on 2026-09-12. SHA-256:
-  `B16825CC521882DE319AA1DF5A883BE09230484B56824D5521EBE6740FF6D0F8`.
+- A fresh signed release AAB for version `1.0.0+3` built from the redesigned
+  `main` and its JAR signature verified on 2026-09-21. SHA-256:
+  `1E9C995E5DBEE749F462730DAEFB30E8644366D4A35F888852166EB0A4319944`.
+  The matching V2-signed APK SHA-256 is
+  `82F533856457F3DDE0B6F85267EEE5B26508A476ABE984D2D3EFDB9CFD14C942`.
   It is still not a Play release candidate until the external gates below are
   complete.
 - Store icon, feature graphic and five labeled release screenshots are under
@@ -104,9 +109,9 @@ separate authorized integrations and policies before they can be advertised.
 
 ## External gates — not yet proven
 
-Account invariant: all Firebase and RevenueCat release work must use the
-designated Harshita owner account. Deployment tooling now fails closed when the
-Firebase CLI is signed into any other account.
+Account invariant: Google Play is owned by Rayyan; Firebase/Google Cloud and
+RevenueCat are owned by Harshita. Deployment tooling fails closed when the
+Firebase CLI is signed into any other account. See `ACCOUNT_MAP.md`.
 
 - [ ] Rotate/reset the exposed upload key and update ignored local signing
   credentials.
@@ -115,23 +120,23 @@ Firebase CLI is signed into any other account.
   `PRIVACY_POLICY_URL`. The prior CLI credential was revoked after diagnostic
   output exposed it; re-authentication must use the designated Harshita account
   and pass the deployment account guard.
-- [ ] Create and activate Google Play subscriptions `showdup_pro_monthly` and
-  `showdup_pro_annual`; configure ₹79 monthly and ₹399 annual India prices,
-  countries, offers/trial and tax. Harshita's Play developer identity is under
-  review, phone verification is consequently locked, and Create app is
-  currently disabled.
-- [ ] Connect the Play app/service account in RevenueCat, attach both products
-  to the current offering and exact `pro` entitlement, and verify notifications.
-  The exact `pro` entitlement and isolated Test Store monthly/yearly setup are
-  complete; the saved Play service-account credentials currently fail RevenueCat
-  validation and no real Play products exist yet.
+- [x] Google Play subscriptions `showdup_pro_monthly` and
+  `showdup_pro_annual` have active India base plans at ₹80 monthly and ₹400
+  annual. No introductory offer or trial is currently configured.
+- [x] RevenueCat has valid Play service-account credentials, both products are
+  attached to the current `default` offering and exact `pro` entitlement, and
+  Google developer notifications are connected to
+  `projects/showdup-f0799/topics/Play-Store-Notifications`.
 - [ ] Complete Play payments-profile identity, merchant, tax and bank details.
 - [ ] Complete Data safety, Accessibility, foreground-service, exact-alarm and
   full-screen-intent declarations plus overlay/special-use FGS review and any
   requested demonstration video.
-- [ ] Enable Places API (New), add a separate Android-restricted key for the
-  debug and final Play signing certificates, cap its quota, and test gym and
-  destination search. Redeploy the updated public privacy policy afterward.
+- [x] Places API (New) is enabled with a dedicated key restricted to
+  `com.rayyanshaikh.orbit`, the upload and Play app-signing SHA-1 certificates,
+  and Places API (New) only. Autocomplete and place-details traffic is capped
+  at 200 requests/day and 30 requests/minute each.
+- [ ] Test gym and destination search from a Play-installed build on a physical
+  device, then redeploy the updated public privacy policy.
 - [ ] Finish activation of the linked Cloud Billing account. Blaze is linked
   and Google Cloud account verification is currently under review, but the
   billing account is not yet open, so the six social functions and Firestore

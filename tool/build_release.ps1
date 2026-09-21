@@ -3,6 +3,15 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $releaseConfigPath = Join-Path $projectRoot 'config.release.json'
 $signingConfigPath = Join-Path $projectRoot 'android\key.properties'
+$originalGradleUserHome = $env:GRADLE_USER_HOME
+
+# Keep Gradle's mutable transforms outside the checkout. On Windows a global
+# Gradle home can itself be a junction into an old project cache, which makes
+# release asset merging fail when Gradle attempts an atomic directory move.
+if ([string]::IsNullOrWhiteSpace($originalGradleUserHome)) {
+    $workspaceParent = Split-Path -Parent $projectRoot
+    $env:GRADLE_USER_HOME = Join-Path $workspaceParent 'Showdup-gradle-release'
+}
 
 if (-not (Test-Path -LiteralPath $releaseConfigPath)) {
     throw 'Missing ignored config.release.json.'
@@ -33,9 +42,17 @@ if (-not [Uri]::TryCreate(
 Push-Location $projectRoot
 try {
     flutter pub get
-    flutter analyze
+    # Analyze the Dart source surfaces explicitly. This avoids recursing into
+    # ignored Android/Flutter build caches that can exist under the repository
+    # on Windows and make a root-level analyzer invocation appear to hang.
+    flutter analyze lib test tool
     flutter test
     flutter build appbundle --release --dart-define-from-file=config.release.json
 } finally {
     Pop-Location
+    if ([string]::IsNullOrWhiteSpace($originalGradleUserHome)) {
+        Remove-Item Env:GRADLE_USER_HOME -ErrorAction SilentlyContinue
+    } else {
+        $env:GRADLE_USER_HOME = $originalGradleUserHome
+    }
 }

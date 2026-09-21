@@ -4,8 +4,10 @@ The app side is finished: `lib/services/billing.dart` configures RevenueCat
 with an anonymous device-local user, unlocks Pro only from the active `pro`
 entitlement (and relocks it at expiry), shows RevenueCat's paywall for the
 current offering, restores purchases, and reads the live prices for the Pro
-page. What remains is store and dashboard setup, in this order. Steps 1–3 need
-the Play app to exist, which needs the developer account verified.
+page. The Google Play app, products, RevenueCat entitlement/offering, Play API
+credentials and real-time developer notifications were connected and verified
+on 2026-09-17. Re-check the items below before every release; do not recreate
+them under a different account. See `ACCOUNT_MAP.md` for ownership.
 
 Identifiers the code expects — use them exactly:
 
@@ -22,21 +24,22 @@ Identifiers the code expects — use them exactly:
 
 Monetize with Play → Products → Subscriptions → Create subscription.
 
-1. `showdup_pro_monthly`, name "ShowdUp Pro monthly". Add base plan
-   `monthly`: auto-renewing, 1 month, price ₹79 in India (let Play convert
-   other countries), grace period 7 days, account hold on. Activate.
-2. `showdup_pro_annual`, name "ShowdUp Pro yearly". Base plan `annual`:
-   auto-renewing, 1 year, ₹399. Add an offer on it: "New customer
-   acquisition", phase "Free trial", 7 days. Activate the base plan and the
-   offer.
+1. `showdup_pro_monthly`, name "ShowdUp Pro Monthly". Its active `monthly`
+   base plan is auto-renewing, 1 month, ₹80 in India, with a 7-day grace
+   period and account hold enabled.
+2. `showdup_pro_annual`, name "ShowdUp Pro Annual". Its active `annual` base
+   plan is auto-renewing, 1 year, ₹400 in India, with a 14-day grace period
+   and account hold enabled.
 
-The app reads the trial from the store, so if you skip the offer the Pro page
-simply stops saying "7 days free".
+No introductory offer or free trial is currently configured. The app reads
+both price and trial state from the store, so it must not display trial copy
+unless a real Play offer is activated later.
 
 ## 2. Google Cloud: the service account RevenueCat uses
 
-The saved credentials failed validation last time. The usual causes are the
-three below; do all of them.
+The saved credentials currently validate. If RevenueCat stops reporting
+"Valid credentials", verify the three requirements below before replacing the
+service account or creating another app.
 
 1. In the Google Cloud project linked to the Play developer account, enable
    **Google Play Android Developer API** and **Cloud Pub/Sub API**.
@@ -63,10 +66,11 @@ Google can take up to 36 hours to accept new credentials. RevenueCat shows
 3. Entitlements → `pro` (already exists) → attach both products.
 4. Offerings → `default` → packages `$rc_monthly` and `$rc_annual` with the
    matching products. Make it the **Current** offering.
-5. Paywalls → create one for the `default` offering. Use the ShowdUp colours:
+5. The `default` offering has a RevenueCat paywall. Keep it consistent with the
+   current ShowdUp design and with the live Play products. It must not display
+   a trial badge while no Play trial offer exists. The original palette was:
    background `#0E0E0C`, text `#F2EEE6`, accent and button `#5CF0BE` with
-   `#0E0E0C` text. Keep the copy short; the annual package should carry the
-   trial badge.
+   `#0E0E0C` text.
 6. API keys → copy the **Google Play public SDK key** (starts with `goog_`).
 
 ## 4. The build
@@ -96,7 +100,7 @@ Walk through, and check RevenueCat's customer page after each:
 
 - Buy monthly; Pro turns on and the animal companions unlock.
 - Cancel in Play; Pro stays until expiry, then turns off by itself.
-- Buy annual with the trial; the trial shows, then converts.
+- Buy annual; Pro turns on and the ₹400 yearly plan is shown at checkout.
 - Clear app data, open Pro, Restore purchases; Pro comes back.
 - Let a test renewal fail (Play's test card "declines after a while"); grace
   period and account hold behave, and Pro drops when it should.

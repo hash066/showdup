@@ -14,8 +14,11 @@ The approved initial India pricing is:
 
 | Product ID | Base plan ID | Renewal period | India price |
 | --- | --- | --- | --- |
-| `showdup_pro_monthly` | `monthly` | 1 month, auto-renewing | ₹79 |
-| `showdup_pro_annual` | `annual` | 1 year, auto-renewing | ₹399 |
+| `showdup_pro_monthly` | `monthly` | 1 month, auto-renewing | ₹80 |
+| `showdup_pro_annual` | `annual` | 1 year, auto-renewing | ₹400 |
+
+Both India base plans are active. No introductory offer or free trial is
+currently configured, so release copy must not promise one.
 
 Add tester Google accounts under Play Console license testing. License testers
 use Google's test payment methods and are not charged; they do not need promo

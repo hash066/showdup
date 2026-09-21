@@ -86,7 +86,7 @@ class _ProScreenState extends ConsumerState<ProScreen> {
                   AnimatedSwitcher(
                     duration: ShowdMotion.quick,
                     child: Text(
-                      priceLine ?? '₹79 a month, or ₹399 a year with 7 days free.',
+                      priceLine ?? 'Plans and pricing shown at checkout.',
                       key: ValueKey(priceLine),
                       style: ShowdType.bodyL,
                     ),

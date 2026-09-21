@@ -2,8 +2,10 @@
 
 The Android package name is fixed: `com.rayyanshaikh.orbit`.
 
-All Firebase and RevenueCat release operations must use the designated Harshita
-owner account. The Firebase deployment scripts verify the ignored
+Google Play is owned by Rayyan's verified developer account. Firebase,
+Google Cloud and RevenueCat are operated from the designated Harshita account.
+`ACCOUNT_MAP.md` records the non-secret identifiers and the bridge between
+those accounts. Firebase deployment scripts verify the ignored
 `FIREBASE_OPERATOR_EMAIL` value and abort if another CLI account is active.
 
 ## Local secrets

@@ -92,8 +92,8 @@ class Billing {
   }
 
   /// The live price line for the Pro page, built from the store products in
-  /// the current offering, like "₹79 a month, or ₹399 a year with 7 days
-  /// free." Null when billing is off or the offering is not set up, so the
+  /// the current offering, like "₹80 a month, or ₹400 a year." Null when
+  /// billing is off or the offering is not set up, so the
   /// page falls back to its own copy.
   static Future<String?> priceLine() async {
     if (!initialized) return null;
@@ -102,17 +102,36 @@ class Billing {
       final offering = offerings.current ?? offerings.all['default'];
       final monthly = offering?.monthly?.storeProduct;
       final annual = offering?.annual?.storeProduct;
-      if (monthly == null && annual == null) return null;
       final trial = _freeTrialDays(annual) ?? _freeTrialDays(monthly);
-      final trialText = trial == null ? '' : ' with $trial days free';
-      if (monthly != null && annual != null) {
-        return '${monthly.priceString} a month, or ${annual.priceString} a year$trialText.';
-      }
-      if (monthly != null) return '${monthly.priceString} a month$trialText.';
-      return '${annual!.priceString} a year$trialText.';
+      return formatPriceLine(
+        monthlyPrice: monthly?.priceString,
+        annualPrice: annual?.priceString,
+        freeTrialDays: trial,
+      );
     } catch (_) {
       return null;
     }
+  }
+
+  /// Formats store-provided prices without inventing a plan or trial.
+  ///
+  /// Keeping this pure makes the failure and partial-offering cases testable
+  /// without initializing the native Google Play Billing client.
+  @visibleForTesting
+  static String? formatPriceLine({
+    String? monthlyPrice,
+    String? annualPrice,
+    int? freeTrialDays,
+  }) {
+    if (monthlyPrice == null && annualPrice == null) return null;
+    final trialText = freeTrialDays != null && freeTrialDays > 0
+        ? ' with $freeTrialDays days free'
+        : '';
+    if (monthlyPrice != null && annualPrice != null) {
+      return '$monthlyPrice a month, or $annualPrice a year$trialText.';
+    }
+    if (monthlyPrice != null) return '$monthlyPrice a month$trialText.';
+    return '$annualPrice a year$trialText.';
   }
 
   static int? _freeTrialDays(StoreProduct? product) {
