@@ -71,7 +71,11 @@ separate authorized integrations and policies before they can be advertised.
   permission, falls back to the full screen when it cannot be shown or when
   TalkBack is on, and one app open counts one reach.
 - `public/` is on the current brand and carries the privacy policy plus the
-  Play-required data deletion page at `/delete-account/`.
+  Play-required data deletion page at `/delete-account/` (not yet deployed).
+- Store icon, feature graphic and six phone screenshots were re-rendered from
+  the app code on the current brand, at Play's limits (2:1, no alpha).
+- The Pro page shows the store's live prices and trial from RevenueCat, and
+  lists only perks the build ships (the catch and Battles hide when off).
 - Social scoring tests: 3 passed; Firestore/Auth/Functions emulator tests: 4
   passed, covering unauthorized access, server-only writes, capacity and
   idempotency. Obsolete cloud commitment/evidence code has been removed. The

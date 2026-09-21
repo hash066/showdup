@@ -56,23 +56,18 @@ Alarms, history and proof stay on your phone. Nothing about what you did is
 uploaded. Battles sync only a name you choose, a companion and weekly scores.
 You can erase everything from Settings.
 
-## Screenshot sequence
+## Match the listing to the build
 
-Regenerate the phone screenshots from the current design before the next
-upload; the files under `store-assets/` still show the previous look. Shoot
-1080 × 2400 release-build screens in this order:
+Every feature named above must be switched on in the uploaded build. The
+release script builds without `FEATURE_CATCH`, so unless the catch ships, delete
+the "Hold an app until you show up" paragraph and the held-app words in the
+Free and Pro lines before saving the listing. Battles need live Firebase
+functions; if they are not deployed, drop the Battles sentence and "battles of
+ten". The Pro page in the app already hides both when they are off.
 
-1. Alarms with the alarm ringing now — the mark, the time, “Prove it”.
-2. Proof counting up — steps, the bar filling, “Hold to end”.
-3. Showed up — the mark flipped, the mint takeover.
-4. Caught — the full screen over a held app.
-5. History — rhythm, streak, the month of marks.
-6. Pro — what it adds and the price.
+## Screenshots and graphics
 
-Also upload `store-assets/high-res-icon.png` as the 512 × 512 store icon and
-`store-assets/feature-graphic.png` as the 1024 × 500 feature graphic. Keep the
-SVG files as editable masters; Google Play receives the PNG files.
-
-Any screenshot taken from sample data must keep the visible “Preview · sample
-data” label. Replace them with real-device screens once those flows have passed
-physical-device testing.
+`store-assets/README.md` lists the six phone screenshots, the icon and the
+feature graphic in upload order, and how to re-render them from the app code.
+Screenshots from sample data keep the visible "Preview · sample data" label;
+replace them with real-device screens once those flows pass device testing.

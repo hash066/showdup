@@ -1,22 +1,30 @@
 # Google Play asset manifest
 
-Upload these raster files to the main store listing:
+Upload these files to the main store listing:
 
-| Play Console field | File | Verified size |
+| Play Console field | File | Size and format |
 | --- | --- | --- |
 | App icon | `high-res-icon.png` | 512 × 512, 32-bit PNG |
-| Feature graphic | `feature-graphic.png` | 1024 × 500 PNG |
-| Phone screenshot 1 | `phone-01-welcome.png` | 1080 × 2400 PNG |
-| Phone screenshot 2 | `phone-02-today.png` | 1080 × 2400 PNG |
-| Phone screenshot 3 | `phone-03-commitments.png` | 1080 × 2400 PNG |
-| Phone screenshot 4 | `phone-04-history.png` | 1080 × 2400 PNG |
-| Phone screenshot 5 | `phone-05-pro.png` | 1080 × 2400 PNG |
+| Feature graphic | `feature-graphic.png` | 1024 × 500, 24-bit PNG |
+| Phone screenshot 1 | `phone-01-welcome.png` | 1080 × 2160, 24-bit PNG |
+| Phone screenshot 2 | `phone-02-alarms.png` | 1080 × 2160, 24-bit PNG |
+| Phone screenshot 3 | `phone-03-proof.png` | 1080 × 2160, 24-bit PNG |
+| Phone screenshot 4 | `phone-04-showed-up.png` | 1080 × 2160, 24-bit PNG |
+| Phone screenshot 5 | `phone-05-history.png` | 1080 × 2160, 24-bit PNG |
+| Phone screenshot 6 | `phone-06-research.png` | 1080 × 2160, 24-bit PNG |
 
-The screenshots came from the signed release app on an Android emulator and
-were visually checked for clipping and rendering errors. They deliberately use
-the app's visibly labeled local-preview data; they are not evidence that
-physical sensors, OEM alarm behavior, Accessibility blocking, or Play Billing
-have passed device testing.
+Play rejects screenshots longer than twice their width and screenshots with an
+alpha channel; these are exactly 2:1 and flattened onto ink.
 
-`high-res-icon.svg` and `feature-graphic.svg` are editable source files and are
-not uploaded to Google Play.
+They are rendered from the real app code with the real fonts, not mocked:
+
+```powershell
+flutter test --update-goldens tool/capture/store_test.dart
+python tool/capture/store_assets.py
+```
+
+The first command renders into `tool/capture/out/store/`; the second checks the
+Play limits, flattens and copies them here. Re-run both after any visible
+change. The app screens use the visibly labeled preview data ("Preview · sample
+data") with a 06:30 walk of 3,000 steps; they are not evidence that sensors,
+OEM alarm behavior, the catch or Play Billing have passed device testing.

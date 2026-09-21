@@ -62,7 +62,8 @@ artifact.
 
 ## RevenueCat and Play Console
 
-Before testing the bundle, configure the following external state:
+`REVENUECAT.md` has the click-by-click setup, the exact identifiers and the
+purchase test plan. In short, before testing the bundle:
 
 1. Create the RevenueCat Android app for `com.rayyanshaikh.orbit` and use its
    Android public SDK key in the local release config.

@@ -91,6 +91,43 @@ class Billing {
     };
   }
 
+  /// The live price line for the Pro page, built from the store products in
+  /// the current offering, like "₹79 a month, or ₹399 a year with 7 days
+  /// free." Null when billing is off or the offering is not set up, so the
+  /// page falls back to its own copy.
+  static Future<String?> priceLine() async {
+    if (!initialized) return null;
+    try {
+      final offerings = await Purchases.getOfferings();
+      final offering = offerings.current ?? offerings.all['default'];
+      final monthly = offering?.monthly?.storeProduct;
+      final annual = offering?.annual?.storeProduct;
+      if (monthly == null && annual == null) return null;
+      final trial = _freeTrialDays(annual) ?? _freeTrialDays(monthly);
+      final trialText = trial == null ? '' : ' with $trial days free';
+      if (monthly != null && annual != null) {
+        return '${monthly.priceString} a month, or ${annual.priceString} a year$trialText.';
+      }
+      if (monthly != null) return '${monthly.priceString} a month$trialText.';
+      return '${annual!.priceString} a year$trialText.';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static int? _freeTrialDays(StoreProduct? product) {
+    final intro = product?.introductoryPrice;
+    if (intro == null || intro.price != 0) return null;
+    final days = switch (intro.periodUnit) {
+      PeriodUnit.day => intro.periodNumberOfUnits,
+      PeriodUnit.week => intro.periodNumberOfUnits * 7,
+      PeriodUnit.month => intro.periodNumberOfUnits * 30,
+      PeriodUnit.year => intro.periodNumberOfUnits * 365,
+      PeriodUnit.unknown => null,
+    };
+    return days != null && days > 0 ? days : null;
+  }
+
   static Future<BillingResult> restore() async {
     _requireInitialized();
     _updateEntitlement(await Purchases.restorePurchases());

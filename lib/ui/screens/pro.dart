@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/features.dart';
 import '../../design/motion.dart';
 import '../../design/buttons.dart';
 import '../../design/icons.dart';
@@ -10,6 +11,7 @@ import '../../design/tokens.dart';
 import '../../design/type.dart';
 import '../../services/billing.dart';
 import '../../services/controller.dart';
+import '../../services/social_service.dart';
 import '../app_provider.dart';
 import 'common.dart';
 
@@ -25,6 +27,17 @@ class ProScreen extends ConsumerStatefulWidget {
 class _ProScreenState extends ConsumerState<ProScreen> {
   bool busy = false;
   late String? message = widget.initialMessage;
+
+  /// The store's own prices once RevenueCat has loaded them.
+  String? priceLine;
+
+  @override
+  void initState() {
+    super.initState();
+    Billing.priceLine().then((line) {
+      if (mounted && line != null) setState(() => priceLine = line);
+    });
+  }
 
   Future<void> run(Future<BillingResult> Function() action) async {
     setState(() => busy = true);
@@ -70,9 +83,13 @@ class _ProScreenState extends ConsumerState<ProScreen> {
                   const SizedBox(height: ShowdSpace.s6),
                   Text('More room\nto show up.', style: ShowdType.hero),
                   const SizedBox(height: ShowdSpace.s3),
-                  Text(
-                    '₹79 a month, or ₹399 a year with 7 days free.',
-                    style: ShowdType.bodyL,
+                  AnimatedSwitcher(
+                    duration: ShowdMotion.quick,
+                    child: Text(
+                      priceLine ?? '₹79 a month, or ₹399 a year with 7 days free.',
+                      key: ValueKey(priceLine),
+                      style: ShowdType.bodyL,
+                    ),
                   ),
                   const SizedBox(height: ShowdSpace.s1),
                   Text(
@@ -81,14 +98,18 @@ class _ProScreenState extends ConsumerState<ProScreen> {
                   ),
                   const SizedBox(height: ShowdSpace.s6),
                   ...staggered([
+                    // Only what this build actually delivers: an advertised
+                    // perk that is switched off would be a misleading claim.
                     for (final (icon, title) in [
                       (ShowdIcons.alarm, '20 proof alarms'),
                       (ShowdIcons.gym, 'Gym, places, GPS walks'),
-                      (ShowdIcons.caught, 'Hold every app'),
+                      if (Features.catchEnabled)
+                        (ShowdIcons.caught, 'Hold every app'),
                       (ShowdIcons.calendar, 'A time for each day'),
                       (ShowdIcons.history, 'Two years of history'),
                       (ShowdIcons.companion, 'Animal companions'),
-                      (ShowdIcons.battle, 'Battles of 10'),
+                      if (SocialService.instance.available)
+                        (ShowdIcons.battle, 'Battles of 10'),
                     ])
                       ShowdRow(
                         leading: ShowdIcon(icon, color: ShowdColors.accent),
