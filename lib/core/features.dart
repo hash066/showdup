@@ -20,6 +20,11 @@ class Features {
     defaultValue: true,
   );
 
+  /// Battles need Google sign-in enabled in Firebase and the social Cloud
+  /// Functions deployed. Until both are live the tab, the Google prompt and
+  /// every sign-in stay off, even in builds that carry Firebase config.
+  static const battles = bool.fromEnvironment('FEATURE_BATTLES');
+
   static const overlay = bool.fromEnvironment(
     'FEATURE_OVERLAY',
     defaultValue: true,

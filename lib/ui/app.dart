@@ -76,8 +76,14 @@ class _AppEntryState extends State<AppEntry> {
           controller = AppController(repository);
           entering = false;
         });
-        unawaited(SocialService.instance.ensureAnonymous());
-        unawaited(SocialService.instance.startWatching());
+        // Battles sign in quietly in the background; a failure there must
+        // never interrupt the alarms.
+        unawaited(
+          SocialService.instance.ensureAnonymous().then<void>(
+            (_) => SocialService.instance.startWatching(),
+            onError: (Object _) {},
+          ),
+        );
       } else {
         await repository.close();
       }

@@ -46,7 +46,9 @@ class AppBlockerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString() ?: return
         FocusTracker.onPackageChanged(this, packageName)
-        val attemptId = AppBlocker.holdingAttempt(this, packageName) ?: return
+        val attemptId = AppBlocker.holdingAttempt(this, packageName)
+            ?: FocusTracker.holdingAttempt(this, packageName)
+            ?: return
         // One open can raise several window events. React, and count the reach,
         // once per open instead of once per event. The window stays short so a
         // deliberate second open is still caught.
@@ -159,7 +161,8 @@ object AppBlocker {
         return valid.any { it.optLong("from", 0L) <= now }
     }
 
-    fun isBlocked(context: Context, packageName: String): Boolean = holdingAttempt(context, packageName) != null
+    fun isBlocked(context: Context, packageName: String): Boolean =
+        holdingAttempt(context, packageName) != null || FocusTracker.holdingAttempt(context, packageName) != null
 
     /** The attempt holding [packageName] right now, or null when it is free to open. */
     fun holdingAttempt(context: Context, packageName: String): String? {
@@ -309,6 +312,7 @@ object FocusTracker {
             .put("cleanSince", maxOf(start, now))
             .put("resetCount", 0)
         save(context, current)
+        AlarmEngine.focusStarted(context, id)
         onPackageChanged(context, foregroundPackage)
         tick(context)
         return true
@@ -317,6 +321,29 @@ object FocusTracker {
     fun stop(context: Context, attemptId: String, clearResult: Boolean = true) {
         save(context, sessions(context).filter { it.optString("attemptId") != attemptId })
         if (clearResult) prefs(context).edit().remove("result:$attemptId").apply()
+    }
+
+    /**
+     * The focus attempt keeping [packageName] closed right now, or null. While
+     * a phone-down session runs, the apps it names are caught like held apps,
+     * so the timer is protected instead of merely reset.
+     */
+    fun holdingAttempt(context: Context, packageName: String): String? {
+        if (AppBlocker.isSafetyExempt(context, packageName)) return null
+        val now = System.currentTimeMillis()
+        return sessions(context).firstOrNull { session ->
+            val packages = session.optJSONArray("packages") ?: JSONArray()
+            session.optLong("start") <= now && now < session.optLong("end") &&
+                (0 until packages.length()).any { packages.getString(it) == packageName }
+        }?.optString("attemptId")?.takeIf { it.isNotEmpty() }
+    }
+
+    /** A phone-down session is running for [attemptId] and nothing broke it. */
+    fun running(context: Context, attemptId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val session = sessions(context).firstOrNull { it.optString("attemptId") == attemptId } ?: return false
+        return session.optLong("start") <= now && now < session.optLong("end") &&
+            !session.optBoolean("resetApplied", false)
     }
 
     fun onPackageChanged(context: Context, packageName: String?) {

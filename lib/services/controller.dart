@@ -614,7 +614,21 @@ class AppController extends ChangeNotifier {
 }
 
 String friendlyError(Object e) {
+  // Native errors already carry a sentence written for people; their code
+  // (for example "unavailable" for a missing GPS fix) is not a network state.
+  if (e is PlatformException) {
+    final text = e.message?.trim();
+    return text == null || text.isEmpty
+        ? 'Something went wrong. Try again.'
+        : text;
+  }
   var message = e.toString().replaceFirst('Bad state: ', '');
+  if (message.contains('operation-not-allowed') ||
+      message.contains('configuration-not-found') ||
+      message.contains('CONFIGURATION_NOT_FOUND') ||
+      message.contains('identity provider configuration')) {
+    return 'Battles aren’t available right now.';
+  }
   if (message.contains('unavailable') ||
       message.contains('network-request-failed')) {
     return 'You’re offline. Reconnect to sync and verify completion.';

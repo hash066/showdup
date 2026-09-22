@@ -89,7 +89,11 @@ object CaughtFlash {
         val app = AppBlocker.appLabels(service, listOf(packageName))[packageName]
             ?.replace('\n', ' ')?.trim()?.take(32)?.ifBlank { null } ?: "That app"
         val title = promiseTitle(service, attemptId)
-        val line = if (title == null) "$app opens when you show up." else "$app opens when you show up for $title."
+        val line = when {
+            FocusTracker.holdingAttempt(service, packageName) == attemptId -> "$app opens again when your phone-down time is up."
+            title == null -> "$app opens when you show up."
+            else -> "$app opens when you show up for $title."
+        }
 
         val card = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL

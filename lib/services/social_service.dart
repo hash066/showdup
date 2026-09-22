@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import '../core/features.dart';
 import '../models/attempt.dart';
 import '../models/battle.dart';
 import '../models/pet.dart';
@@ -20,7 +21,7 @@ class SocialService {
   final _scoreUpdates = StreamController<List<BattleMemberScore>>.broadcast();
   int _watchGeneration = 0;
 
-  bool get available => Firebase.apps.isNotEmpty;
+  bool get available => Features.battles && Firebase.apps.isNotEmpty;
   User? get user => available ? FirebaseAuth.instance.currentUser : null;
   bool get googleLinked =>
       user?.providerData.any(
@@ -30,8 +31,18 @@ class SocialService {
 
   Future<User?> ensureAnonymous() async {
     if (!available) return null;
-    return FirebaseAuth.instance.currentUser ??
-        (await FirebaseAuth.instance.signInAnonymously()).user;
+    try {
+      return FirebaseAuth.instance.currentUser ??
+          (await FirebaseAuth.instance.signInAnonymously()).user;
+    } on FirebaseAuthException catch (error) {
+      // A sign-in method switched off in Firebase must never reach the
+      // person as a console message.
+      if (error.code == 'operation-not-allowed' ||
+          error.code == 'configuration-not-found') {
+        throw StateError('Battles aren’t available right now.');
+      }
+      rethrow;
+    }
   }
 
   Future<void> startWatching() async {
