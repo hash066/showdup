@@ -5,6 +5,8 @@ import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
 import android.hardware.*
+import android.location.Address
+import android.location.Geocoder
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
@@ -102,6 +104,8 @@ class MainActivity:FlutterFragmentActivity(){
    else->result.notImplemented()
   }}catch(e:Exception){result.error("social_error",e.message,null)}}
   MethodChannel(engine.dartExecutor.binaryMessenger,"app.showdup/places").setMethodCallHandler{call,result->try{when(call.method){
+   "configured"->{val key=BuildConfig.PLACES_API_KEY;result.success(key.isNotBlank()&&key!="DEFAULT_API_KEY")}
+   "geocode"->geocode((call.arguments as? Map<*,*>)?.get("query")?.toString()?.trim().orEmpty(),result)
    "pickPlace"->{
     if(placeResult!=null){result.error("busy","Place search is already open.",null);return@setMethodCallHandler}
     val key=BuildConfig.PLACES_API_KEY
@@ -234,6 +238,33 @@ class MainActivity:FlutterFragmentActivity(){
   "currentLocation"->{if(!granted(Manifest.permission.ACCESS_FINE_LOCATION)){r.error("permission_denied","Allow precise location first",null);return};LocationServices.getFusedLocationProviderClient(this).getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,null).addOnSuccessListener{l->if(l==null)r.error("unavailable","No location fix. Try outdoors.",null)else r.success(mapOf("lat" to l.latitude,"lng" to l.longitude))}.addOnFailureListener{r.error("unavailable",it.message,null)}}
   else->r.notImplemented()
  }}
+ /**
+  * Place search without a Places key: Android's own geocoder turns "Cult
+  * Indiranagar" into addresses with coordinates. Only the typed text leaves
+  * the phone, through Google Play services.
+  */
+ private fun geocode(query:String,result:MethodChannel.Result){
+  if(query.length<2){result.success(emptyList<Any>());return}
+  if(!Geocoder.isPresent()){result.error("geocoder_unavailable","Place search isn't available on this phone. Use where you are now instead.",null);return}
+  val geocoder=Geocoder(this)
+  fun deliver(addresses:List<Address>){
+   val places=addresses.filter{it.hasLatitude()&&it.hasLongitude()}.map{a->
+    val lines=(0..a.maxAddressLineIndex).mapNotNull{a.getAddressLine(it)}.joinToString(", ")
+    val feature=a.featureName?.takeIf{it.isNotBlank()&&!it.all{c->c.isDigit()||c=='-'||c=='/'}}
+    mapOf("id" to "","name" to (feature?:lines.substringBefore(",").ifBlank{query}),"address" to lines,"lat" to a.latitude,"lng" to a.longitude)
+   }
+   runOnUiThread{result.success(places)}
+  }
+  if(Build.VERSION.SDK_INT>=33){
+   geocoder.getFromLocationName(query,6,object:Geocoder.GeocodeListener{
+    override fun onGeocode(addresses:MutableList<Address>){deliver(addresses)}
+    override fun onError(errorMessage:String?){runOnUiThread{result.error("geocode_failed","Search didn't work. Check your connection and try again.",null)}}
+   })
+  }else CoroutineScope(Dispatchers.IO).launch{
+   try{@Suppress("DEPRECATION") deliver(geocoder.getFromLocationName(query,6).orEmpty())}
+   catch(_:Exception){withContext(Dispatchers.Main){result.error("geocode_failed","Search didn't work. Check your connection and try again.",null)}}
+  }
+ }
  override fun onRequestPermissionsResult(code:Int,permissions:Array<out String>,results:IntArray){super.onRequestPermissionsResult(code,permissions,results);if(code==701){permissionResult?.success(results.isNotEmpty()&&results.all{it==PackageManager.PERMISSION_GRANTED});permissionResult=null}}
  private fun openAutostart(){val candidates=listOf(ComponentName("com.miui.securitycenter","com.miui.permcenter.autostart.AutoStartManagementActivity"),ComponentName("com.coloros.safecenter","com.coloros.safecenter.permission.startup.StartupAppListActivity"),ComponentName("com.vivo.permissionmanager","com.vivo.permissionmanager.activity.BgStartUpManagerActivity"));for(c in candidates){try{startActivity(Intent().setComponent(c));return}catch(_:Exception){}};startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))}
 }

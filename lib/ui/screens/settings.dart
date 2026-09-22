@@ -402,11 +402,11 @@ class PrivacyScreen extends StatelessWidget {
                   ),
                   (
                     'Places',
-                    'Gym and place proof uses a foreground service to check that you stay near the place for a few minutes. Place search text goes to Google Places. The chosen place and your arrival stay on this phone. ShowdUp never asks for background location.',
+                    'Gym and place proof uses a foreground service to check that you stay near the place for a few minutes. Place search text goes to Google. The chosen place and your arrival stay on this phone. ShowdUp never asks for background location.',
                   ),
                   (
                     'Apps you choose',
-                    'For Phone-down focus, and for apps you catch, Android Accessibility tells ShowdUp only which app came to the front. ShowdUp never reads what is on screen, what you type, your notifications or passwords. The first catch of the day shows the full screen; after that a small card says “Caught.” over the app for two seconds and Android goes home. Settings, your phone app and emergency apps are never held. Turn it off any time in Android Accessibility settings.',
+                    'For Phone-down focus, and for apps you catch, Android Accessibility tells ShowdUp only which app came to the front. While a focus timer runs, the apps you picked for it are shut the same way. ShowdUp never reads what is on screen, what you type, your notifications or passwords. The first catch of the day shows the full screen; after that a small card says “Caught.” over the app for two seconds and Android goes home. Settings, your phone app and emergency apps are never held. Turn it off any time in Android Accessibility settings.',
                   ),
                   if (Features.workout)
                     (

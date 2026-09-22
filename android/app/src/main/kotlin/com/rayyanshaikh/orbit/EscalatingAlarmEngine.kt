@@ -88,6 +88,26 @@ object AlarmEngine {
   if (current < 0 || j.optInt("lastHandledIndex", -1) >= current) return
   j.put("lastHandledIndex", current); prefs(c).edit().putString("alarm:$id", j.toString()).apply(); event(c, id, "snoozed", current.toString(), source); scheduleNext(c, id, current + 1)
  }
+ /**
+  * A reminder that falls inside a running phone-down session: no sound, no
+  * notification, no snooze penalty. The next one is still booked so the alarm
+  * comes back if the session breaks, but it never ends the attempt early.
+  */
+ private fun passQuietly(c: Context, id: String, index: Int) {
+  val j = JSONObject(prefs(c).getString("alarm:$id", null) ?: return)
+  j.put("lastHandledIndex", index); prefs(c).edit().putString("alarm:$id", j.toString()).apply()
+  val next = index + 1
+  val limit = min(AlarmSchedulePolicy.MAX_PULSES, j.optInt("maxReminders", AlarmSchedulePolicy.MAX_PULSES))
+  val at = System.currentTimeMillis() + AlarmSchedulePolicy.gapMs(j.optLong("intervalMinutes", 20L), next)
+  if (next < limit && at < deadline(j)) scheduleAt(c, id, next, at)
+ }
+ /** Tapping Start on phone-down stops the ringing now, with no snooze cost. */
+ fun focusStarted(c: Context, id: String) {
+  val j = JSONObject(prefs(c).getString("alarm:$id", null) ?: return)
+  silence(c, id, false, "focus")
+  val current = j.optInt("currentIndex", -1)
+  if (current >= 0 && j.optInt("lastHandledIndex", -1) < current) passQuietly(c, id, current)
+ }
  private fun scheduleNext(c: Context, id: String, nextIndex: Int) {
   val j = JSONObject(prefs(c).getString("alarm:$id", null) ?: return)
   scheduleAt(c, id, nextIndex, System.currentTimeMillis() + AlarmSchedulePolicy.gapMs(j.optLong("intervalMinutes", 20L), nextIndex))
@@ -103,10 +123,11 @@ object AlarmEngine {
   if (now >= j.getLong("endEpochMs") || prefs(c).getBoolean("ended:$id", false)) { expire(c, id, "window_ended"); return }
   channels(c); configureBlocker(c, j); if (j.optLong("firstFiredAt", 0L) == 0L) j.put("firstFiredAt", now); j.put("currentIndex", index).put("nextIndex", index).put("nextAlarmAt", 0L); prefs(c).edit().putString("alarm:$id", j.toString()).apply()
   if (j.optString("verifierType") == "focus") {
-   val cfg = j.getJSONObject("verifierConfig")
-   val focusStarted=FocusTracker.start(c, mapOf("attemptId" to id,"packages" to (0 until cfg.getJSONArray("packages").length()).map { cfg.getJSONArray("packages").getString(it) },"startEpochMs" to j.getLong("startEpochMs"),"endEpochMs" to j.getLong("endEpochMs"),"targetDurationMs" to cfg.getLong("targetDurationMs"),"graceSeconds" to cfg.optInt("graceSeconds",10)))
-   if(!focusStarted){prefs(c).edit().putString("failure:$id",JSONObject().put("type","focus").put("reason","accessibility_revoked").put("failedAt",now).toString()).apply();cancel(c,id);return}
-   if (FocusTracker.status(c,id)["completed"] == true) return
+   // Phone-down starts when the person taps Start, not when the alarm rings;
+   // otherwise sleeping through the alarm would count as focus. Once it runs,
+   // later reminders stay silent so the phone can actually stay down.
+   if (FocusTracker.status(c, id)["completed"] == true) return
+   if (index > 0 && FocusTracker.running(c, id)) { passQuietly(c, id, index); return }
   }
   val snooze = PendingIntent.getBroadcast(c, ("snooze:$id:$index").hashCode(), Intent(c, AlarmReceiver::class.java).setAction("showdup.snooze").putExtra("attemptId", id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   val total = min(6, j.optInt("maxReminders", 6))

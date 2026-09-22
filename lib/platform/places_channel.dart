@@ -33,4 +33,26 @@ class PlacesChannel {
     });
     return result == null ? null : PickedPlace.fromMap(result);
   }
+
+  /// Whether this build carries a Google Places key. Without one, place
+  /// search falls back to [search].
+  static Future<bool> configured() async {
+    try {
+      return await _channel.invokeMethod<bool>('configured') ?? false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Free place lookup through Android's own geocoder: no key, no billing.
+  /// Best with a name and an area, like "Cult Indiranagar".
+  static Future<List<PickedPlace>> search(String query) async {
+    final values = await _channel.invokeMethod<List<dynamic>>('geocode', {
+      'query': query,
+    });
+    return [
+      for (final value in values ?? const [])
+        PickedPlace.fromMap(value as Map),
+    ];
+  }
 }

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../design/motion.dart';
 import '../../design/sensory.dart';
@@ -152,7 +153,48 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
     return _proof(app, a, c);
   }
 
+  /// LeetCode checks the public profile while this screen is open, so start
+  /// looking as soon as it appears instead of waiting for a tap.
+  bool _autoStarted = false;
+
+  void _autoStart(AppController app, Attempt a, Commitment c) {
+    if (_autoStarted ||
+        app.preview ||
+        c.verifierType != VerifierType.leetcode ||
+        !a.isWindowOpen ||
+        app.progress.containsKey(a.id)) {
+      return;
+    }
+    _autoStarted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) app.start(a);
+    });
+  }
+
+  Future<void> _openLeetCode() async {
+    final opened = await launchUrl(
+      Uri.parse('https://leetcode.com/problemset/'),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) throw StateError('Couldn’t open LeetCode.');
+  }
+
+  static ShowdIcons _trackingIcon(Commitment c) => switch (c.verifierType) {
+    VerifierType.leetcode => ShowdIcons.code,
+    VerifierType.focus => ShowdIcons.focus,
+    VerifierType.location || VerifierType.walk => ShowdIcons.arrive,
+    _ => ShowdIcons.steps,
+  };
+
+  static String _trackingWord(Commitment c) => switch (c.verifierType) {
+    VerifierType.leetcode => 'Checking your profile',
+    VerifierType.focus => 'Apps held',
+    VerifierType.location || VerifierType.walk => 'Following',
+    _ => 'Counting',
+  };
+
   Widget _proof(AppController app, Attempt a, Commitment c) {
+    _autoStart(app, a, c);
     final open = a.isWindowOpen;
     final failure = app.failures[a.id];
     final tracking = app.progress.containsKey(a.id);
@@ -223,16 +265,16 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                     runSpacing: ShowdSpace.s2,
                     children: [
                       InfoTag(
-                        tracking ? ShowdIcons.steps : ShowdIcons.alarm,
+                        tracking ? _trackingIcon(c) : ShowdIcons.alarm,
                         tracking
-                            ? 'Counting'
+                            ? _trackingWord(c)
                             : open
                             ? 'Until ${zoneClock(a.windowEndAt, zone)}'
                             : 'Opens ${zoneClock(a.windowStartAt, zone)}',
                         accent: open,
                       ),
-                      if (c.verifierType == VerifierType.leetcode)
-                        const InfoTag(ShowdIcons.code, 'Beta'),
+                      if (c.verifierConfig case LeetCodeConfig(:final username))
+                        InfoTag(ShowdIcons.code, '@$username'),
                       if (app.preview)
                         const InfoTag(ShowdIcons.info, 'Preview'),
                     ],
@@ -280,15 +322,31 @@ class _AttemptScreenState extends ConsumerState<AttemptScreen> {
                 children: [
                   if (open) ...[
                     ShowdButton(
-                      label: tag
-                          ? 'Scan my tag'
-                          : tracking
-                          ? 'Keep going'
-                          : 'Start',
-                      icon: tag ? ShowdIcons.tagScan : ShowdIcons.check,
+                      label: switch (c.verifierType) {
+                        _ when tag => 'Scan my tag',
+                        VerifierType.leetcode => 'Open LeetCode',
+                        VerifierType.focus when tracking => 'Focusing',
+                        VerifierType.focus => 'Start focus',
+                        _ when tracking => 'Keep going',
+                        _ => 'Start',
+                      },
+                      icon: switch (c.verifierType) {
+                        _ when tag => ShowdIcons.tagScan,
+                        VerifierType.leetcode => ShowdIcons.code,
+                        VerifierType.focus => ShowdIcons.focus,
+                        _ => ShowdIcons.check,
+                      },
                       busy: busy,
                       cue: Cue.toggleOn,
-                      onPressed: () => run(() => app.start(a)),
+                      onPressed:
+                          c.verifierType == VerifierType.focus && tracking
+                          ? null
+                          : () => run(() async {
+                              await app.start(a);
+                              if (c.verifierType == VerifierType.leetcode) {
+                                await _openLeetCode();
+                              }
+                            }),
                     ),
                     const SizedBox(height: ShowdSpace.s3),
                   ],

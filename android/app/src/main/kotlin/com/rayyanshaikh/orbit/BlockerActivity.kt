@@ -89,7 +89,9 @@ class BlockerActivity : Activity() {
         column.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
         column.addView(MarkView(this, ringing = true), LinearLayout.LayoutParams(Brand.dp(this, 88), Brand.dp(this, 88)))
         column.addView(text("Caught.", 44f, Brand.paper, Brand.bold(this)).apply { setPadding(0, Brand.dp(context, 28), 0, 0) })
-        column.addView(text("$appName opens when you show up for $title.", 18f, Brand.stone, Brand.medium(this)).apply {
+        val focusHold = attemptId != null && FocusTracker.holdingAttempt(this, held) == attemptId
+        val line = if (focusHold) "$appName opens again when your phone-down time is up." else "$appName opens when you show up for $title."
+        column.addView(text(line, 18f, Brand.stone, Brand.medium(this)).apply {
             setPadding(0, Brand.dp(context, 8), 0, 0)
         })
         if (!reason.isNullOrBlank()) {

@@ -36,7 +36,7 @@
   </header>
 
   <h2>What stays on your phone</h2>
-  <p>ShowdUp stores your timezone, alarms, schedules, reminder activity, attempt history, subscription state and proof in the app's private storage. Step proof keeps a count and its timing. Walk proof can keep active duration, distance, coordinates, accuracy and timestamps. Place proof can keep the place you chose, coordinates, accuracy, timestamps and how long you stayed. Phone-down proof keeps the package names you selected and when the timer reset. Tag proof keeps only a scrambled fingerprint of the code, never what it says. LeetCode proof keeps the public username, an accepted count and problem slugs. Place-search text and the result you pick are processed by Google Places when you open place search.</p>
+  <p>ShowdUp stores your timezone, alarms, schedules, reminder activity, attempt history, subscription state and proof in the app's private storage. Step proof keeps a count and its timing. Walk proof can keep active duration, distance, coordinates, accuracy and timestamps. Place proof can keep the place you chose, coordinates, accuracy, timestamps and how long you stayed. Phone-down proof keeps the package names you selected and when the timer reset. Tag proof keeps only a scrambled fingerprint of the code, never what it says. LeetCode proof keeps the public username, an accepted count and problem slugs. When you search for a place, the text you type goes to Google, through Google Places or Android’s own place lookup; the result you pick stays on your phone.</p>
   <p>ShowdUp never uploads alarm titles, step counts, coordinates or proof. Android backup is disabled. History is kept on the device for up to two years. You can erase everything from Settings, and Android removes private app data when you clear storage or uninstall.</p>
   <p>If you share a check-in or a proof card, Android's share sheet sends it only to the destination you pick. ShowdUp keeps no buddy list.</p>
 
@@ -45,7 +45,7 @@
   <p>Deleting your data or uninstalling does not cancel a subscription. Cancel in Google Play. See <a href="https://www.revenuecat.com/privacy/">RevenueCat's privacy information</a> and <a href="https://policies.google.com/privacy">Google's privacy policy</a>.</p>
 
   <h2>Accessibility access: phone-down proof and the catch</h2>
-  <p>ShowdUp's Android Accessibility service is optional and off until you turn it on. While a phone-down alarm or a held app is active, the service receives window-change events and reads only the package name of the app in front. A selected app left open for ten continuous seconds resets the phone-down timer. An app you chose to hold shows the Caught screen instead.</p>
+  <p>ShowdUp's Android Accessibility service is optional and off until you turn it on. While a phone-down alarm or a held app is active, the service receives window-change events and reads only the package name of the app in front. While a phone-down timer you started is running, the apps you picked for it are caught and closed the same way as a held app, so the timer can finish; if one still stays open for ten continuous seconds, the timer restarts.</p>
   <p>The first time a held app catches you in a day, ShowdUp shows a full screen that explains the rule and offers to end the day. After that, it draws a small card over the app for about two seconds saying you were caught, then uses Android's own Home action to leave the app. The card shows only ShowdUp's own words; it never reads, copies or covers what the app is doing, and you can turn it off in Settings.</p>
   <p>ShowdUp does not use this service to read screen contents, typed text, notifications, passwords or form fields. It does not inject gestures or key events, and it never transmits Accessibility events or your list of selected apps. You can decline the feature, turn the service off in Android Accessibility settings, clear app data or uninstall. Alarms and every other proof keep working without it.</p>
 
@@ -68,7 +68,7 @@
   <p>You can delete your Battle account and its data from Settings, or as described on the <a href="/delete-account/">data deletion page</a>.</p>
 
   <h2>Sharing, security and limits</h2>
-  <p>ShowdUp has no advertising and does not sell personal data. Data is processed by Google Play and RevenueCat for subscriptions, Firebase for optional Battles, Google Places when you deliberately search for a place, and LeetCode when you set up public-profile proof. Android's share sheet sends content only where you choose. Information can also be disclosed when required by law.</p>
+  <p>ShowdUp has no advertising and does not sell personal data. Data is processed by Google Play and RevenueCat for subscriptions, Firebase for optional Battles, Google when you deliberately search for a place, and LeetCode when you set up public-profile proof. Android's share sheet sends content only where you choose. Information can also be disclosed when required by law.</p>
   <p>On-device data is protected by Android's application sandbox. No software can guarantee absolute security, and root-level access may allow alteration. Step, location and app-use signals are plausibility checks, not tamper-proof proof.</p>
 
   <h2>Children</h2>

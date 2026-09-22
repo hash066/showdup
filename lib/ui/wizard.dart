@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -526,9 +528,15 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       error = null;
     });
     try {
-      final place = await PlacesChannel.pickPlace(
-        initialQuery: kind == CommitmentKind.gym ? 'gym' : '',
-      );
+      // Google's place picker when this build has a Places key; otherwise
+      // the free search through Android's own geocoder.
+      final place = await PlacesChannel.configured()
+          ? await PlacesChannel.pickPlace(
+              initialQuery: kind == CommitmentKind.gym ? 'gym' : '',
+            )
+          : mounted
+          ? await _searchPlace(context, gym: kind == CommitmentKind.gym)
+          : null;
       if (place == null || !mounted) return;
       setState(() {
         placeId = place.id;
@@ -769,7 +777,7 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
   };
 
   String? get _stepBody => switch (page) {
-    2 when _focus => 'Ten seconds in one restarts the timer.',
+    2 when _focus => 'They stay shut until the timer ends.',
     2 => 'It stays shut until you show up. Optional.',
     _ => null,
   };
@@ -779,9 +787,9 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     return [
       for (final (preset, subtitle) in [
         (CommitmentKind.steps, 'Counted by your phone'),
-        (CommitmentKind.focus, 'Phone down, timer on'),
+        (CommitmentKind.focus, 'Chosen apps shut, timer on'),
         (CommitmentKind.tagScan, 'Scan a code you place'),
-        (CommitmentKind.leetcode, 'Solve problems · beta'),
+        (CommitmentKind.leetcode, 'Solved on your public profile'),
         (CommitmentKind.workout, 'Health Connect'),
         (CommitmentKind.gym, 'Auto check-in'),
         (CommitmentKind.arrive, 'Get somewhere'),
@@ -812,6 +820,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$targetSteps',
         unit: 'new steps',
+        onEdit: () => _type(
+          heading: 'How many steps?',
+          value: targetSteps,
+          min: 500,
+          max: 15000,
+          unit: 'steps',
+          apply: (v) => targetSteps = v.round(),
+        ),
         slider: TickSlider(
           value: targetSteps.toDouble(),
           min: 500,
@@ -884,6 +900,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           _amount(
             value: '$walkMinutes',
             unit: 'minutes',
+            onEdit: () => _type(
+              heading: 'How long?',
+              value: walkMinutes,
+              min: 5,
+              max: 120,
+              unit: 'minutes',
+              apply: (v) => walkMinutes = v.round(),
+            ),
             slider: TickSlider(
               value: walkMinutes.toDouble(),
               min: 5,
@@ -901,6 +925,15 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           _amount(
             value: (walkDistanceM / 1000).toStringAsFixed(2),
             unit: 'km',
+            onEdit: () => _type(
+              heading: 'How far?',
+              value: walkDistanceM / 1000,
+              min: 0.25,
+              max: 10,
+              unit: 'km',
+              decimals: 2,
+              apply: (v) => walkDistanceM = (v * 1000).round(),
+            ),
             slider: TickSlider(
               value: walkDistanceM.toDouble(),
               min: 250,
@@ -927,6 +960,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$radiusM',
         unit: 'metres around the place',
+        onEdit: () => _type(
+          heading: 'How close counts?',
+          value: radiusM,
+          min: 100,
+          max: 300,
+          unit: 'metres',
+          apply: (v) => radiusM = v.round(),
+        ),
         slider: TickSlider(
           value: radiusM.toDouble(),
           min: 100,
@@ -944,6 +985,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$focusMinutes',
         unit: 'minutes, phone down',
+        onEdit: () => _type(
+          heading: 'How long, phone down?',
+          value: focusMinutes,
+          min: 5,
+          max: 180,
+          unit: 'minutes',
+          apply: (v) => focusMinutes = v.round(),
+        ),
         slider: TickSlider(
           value: focusMinutes.toDouble(),
           min: 5,
@@ -955,7 +1004,10 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
           }),
         ),
       ),
-      Text('You’ll pick the apps in step 3.', style: ShowdType.caption),
+      Text(
+        'Tap Start focus when it rings. You’ll pick the apps to shut in step 3.',
+        style: ShowdType.caption,
+      ),
     ],
     CommitmentKind.workout => [
       Wrap(
@@ -978,6 +1030,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$workoutMinutes',
         unit: 'recorded minutes',
+        onEdit: () => _type(
+          heading: 'How many minutes?',
+          value: workoutMinutes,
+          min: 10,
+          max: 180,
+          unit: 'minutes',
+          apply: (v) => workoutMinutes = v.round(),
+        ),
         slider: TickSlider(
           value: workoutMinutes.toDouble(),
           min: 10,
@@ -1043,6 +1103,14 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       _amount(
         value: '$targetAccepted',
         unit: targetAccepted == 1 ? 'accepted problem' : 'accepted problems',
+        onEdit: () => _type(
+          heading: 'How many problems?',
+          value: targetAccepted,
+          min: 1,
+          max: 10,
+          unit: 'problems',
+          apply: (v) => targetAccepted = v.round(),
+        ),
         slider: TickSlider(
           value: targetAccepted.toDouble(),
           min: 1,
@@ -1072,9 +1140,20 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
     ),
     if (placeAddress?.isNotEmpty == true)
       Text(placeAddress!, style: ShowdType.bodyM),
+    if (lat.text.isNotEmpty) ...[
+      const SizedBox(height: ShowdSpace.s3),
+      TextField(
+        controller: label,
+        maxLength: 40,
+        onChanged: (_) => setState(() => title.text = _presetTitle),
+        decoration: const InputDecoration(labelText: 'Call it'),
+      ),
+    ],
     const SizedBox(height: ShowdSpace.s4),
     ShowdButton(
-      label: label.text.isEmpty ? 'Search places' : 'Change place',
+      label: label.text.isEmpty
+          ? (kind == CommitmentKind.gym ? 'Find my gym' : 'Search places')
+          : 'Change place',
       icon: ShowdIcons.arrive,
       tone: ShowdButtonTone.outline,
       onPressed: busy ? null : pickPlace,
@@ -1087,32 +1166,94 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       ),
   ];
 
+  /// A big number with its slider. Tapping the number lets people type it.
   Widget _amount({
     required String value,
     required String unit,
     required Widget slider,
+    required VoidCallback onEdit,
   }) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          BigNumber(
-            value,
-            style: ShowdType.numeralM,
-            color: ShowdColors.accent,
+      Semantics(
+        button: true,
+        label: '$value $unit. Tap to type a number.',
+        excludeSemantics: true,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(ShowdRadius.control),
+          onTap: onEdit,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              BigNumber(
+                value,
+                style: ShowdType.numeralM,
+                color: ShowdColors.accent,
+              ),
+              const SizedBox(width: ShowdSpace.s2),
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(unit, style: ShowdType.label),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(left: ShowdSpace.s2, bottom: 12),
+                child: ShowdIcon(
+                  ShowdIcons.edit,
+                  size: 18,
+                  color: ShowdColors.stone,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: ShowdSpace.s2),
-          Flexible(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(unit, style: ShowdType.label),
-            ),
-          ),
-        ],
+        ),
       ),
       slider,
     ],
+  );
+
+  /// Opens the number keypad for one of the sliders.
+  Future<void> _type({
+    required String heading,
+    required num value,
+    required double min,
+    required double max,
+    required void Function(double) apply,
+    String? unit,
+    int decimals = 0,
+  }) async {
+    final typed = await showNumberEntry(
+      context,
+      title: heading,
+      value: value.toDouble(),
+      min: min,
+      max: max,
+      unit: unit,
+      decimals: decimals,
+    );
+    if (typed == null || !mounted) return;
+    setState(() {
+      apply(typed);
+      title.text = _presetTitle;
+    });
+  }
+
+  /// A text line above a slider that can also be tapped to type.
+  Widget _typeable(String text, VoidCallback onEdit) => Semantics(
+    button: true,
+    label: '$text. Tap to type a number.',
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: onEdit,
+      child: Row(
+        children: [
+          Flexible(child: Text(text, style: ShowdType.bodyL)),
+          const SizedBox(width: ShowdSpace.s2),
+          const ShowdIcon(ShowdIcons.edit, size: 16, color: ShowdColors.stone),
+        ],
+      ),
+    ),
   );
 
   List<Widget> _whenStep() {
@@ -1169,7 +1310,17 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
       const SizedBox(height: ShowdSpace.s8),
       const SectionLabel('Reminders'),
       const SizedBox(height: ShowdSpace.s3),
-      Text('Every $interval minutes', style: ShowdType.bodyL),
+      _typeable(
+        'Every $interval minutes',
+        () => _type(
+          heading: 'Remind me every',
+          value: interval,
+          min: 5,
+          max: 120,
+          unit: 'minutes',
+          apply: (v) => interval = v.round(),
+        ),
+      ),
       TickSlider(
         value: interval.toDouble(),
         min: 5,
@@ -1177,9 +1328,16 @@ class _CommitmentWizardState extends ConsumerState<CommitmentWizard>
         divisions: 23,
         onChanged: (v) => setState(() => interval = (v / 5).round() * 5),
       ),
-      Text(
+      _typeable(
         'Up to $maxReminders reminder${maxReminders == 1 ? '' : 's'}',
-        style: ShowdType.bodyL,
+        () => _type(
+          heading: 'How many reminders?',
+          value: maxReminders,
+          min: 1,
+          max: 6,
+          unit: 'reminders',
+          apply: (v) => maxReminders = v.round(),
+        ),
       ),
       TickSlider(
         value: maxReminders.toDouble(),
@@ -1576,4 +1734,111 @@ class _AppRow extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Place search when the build has no Google Places key: type a name and an
+/// area, pick a result. Android's geocoder does the lookup for free.
+Future<PickedPlace?> _searchPlace(BuildContext context, {required bool gym}) =>
+    showShowdSheet<PickedPlace>(
+      context,
+      builder: (_) => _PlaceSearch(gym: gym),
+    );
+
+class _PlaceSearch extends StatefulWidget {
+  const _PlaceSearch({required this.gym});
+  final bool gym;
+
+  @override
+  State<_PlaceSearch> createState() => _PlaceSearchState();
+}
+
+class _PlaceSearchState extends State<_PlaceSearch> {
+  final query = TextEditingController();
+  Timer? _debounce;
+  List<PickedPlace>? results;
+  bool searching = false;
+  String? problem;
+  int _generation = 0;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    query.dispose();
+    super.dispose();
+  }
+
+  void _queue(String _) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), _search);
+  }
+
+  Future<void> _search() async {
+    final text = query.text.trim();
+    if (text.length < 2) return;
+    final generation = ++_generation;
+    setState(() {
+      searching = true;
+      problem = null;
+    });
+    try {
+      final found = await PlacesChannel.search(text);
+      if (!mounted || generation != _generation) return;
+      setState(() => results = found);
+    } catch (e) {
+      if (mounted && generation == _generation) {
+        setState(() => problem = friendlyError(e));
+      }
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => searching = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final found = results;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.gym ? 'Find your gym' : 'Find the place',
+          style: ShowdType.titleL,
+        ),
+        const SizedBox(height: ShowdSpace.s4),
+        TextField(
+          controller: query,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          onChanged: _queue,
+          onSubmitted: (_) => _search(),
+          decoration: InputDecoration(
+            labelText: 'Name and area',
+            hintText: widget.gym ? 'Cult Indiranagar' : 'Cubbon Park',
+            suffixIcon: searching
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: ShowdLoader(size: 24),
+                  )
+                : null,
+          ),
+        ),
+        const SizedBox(height: ShowdSpace.s3),
+        if (problem != null) ShowdNotice(problem!),
+        if (found != null && found.isEmpty && !searching)
+          Text(
+            'Nothing found. Add the area or the city.',
+            style: ShowdType.bodyM,
+          ),
+        if (found != null)
+          for (final place in found)
+            ShowdRow(
+              leading: const ShowdIcon(ShowdIcons.arrive),
+              title: place.name,
+              subtitle: place.address,
+              onTap: () => Navigator.pop(context, place),
+            ),
+      ],
+    );
+  }
 }

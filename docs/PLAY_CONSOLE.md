@@ -60,7 +60,9 @@ the current RevenueCat data-safety guidance immediately before submission.
 
 ## Sensitive capability declarations
 
-- Accessibility: describe the optional selected-app hold ("the catch"), its
+- Accessibility: describe the optional selected-app hold ("the catch") and
+  phone-down focus, which closes the apps the person picked while a focus
+  timer they started is running. Describe both with their
   prominent in-app disclosure, the exact foreground-package comparison, and
   that it does not read screen contents, text, passwords, or inject input. The
   service declares `android:isAccessibilityTool="false"` because it is a
